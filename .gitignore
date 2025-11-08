@@ -48,3 +48,4 @@ yarn-error.log*
 
 # Kiro directory
 .kiro/
+.sparkle-space/
