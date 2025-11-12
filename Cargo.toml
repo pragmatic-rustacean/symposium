@@ -5,7 +5,8 @@ members = [
     "ci",
     "src/symposium-acp",
     "src/symposium-crate-sources-proxy",
-    "src/cli-agent-util", "src/sacp-tee",
+    "src/cli-agent-util",
+    "src/sacp-tee",
 ]
 resolver = "2"
 

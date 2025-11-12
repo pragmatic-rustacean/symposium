@@ -11,10 +11,51 @@
 //! 4. Forward Initialize through the chain
 //! 5. Bidirectionally forward all subsequent messages
 
-pub mod logging;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use sacp_conductor::conductor::Conductor;
+
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct LoggingArgs {
+    /// Enable logging of input messages (from editor/client)
+    #[arg(long)]
+    log_input: bool,
+
+    /// Enable logging of output messages (to agent/server)
+    #[arg(long)]
+    log_output: bool,
+
+    /// Directory path for log files
+    #[arg(long, default_value = ".symposium/logs")]
+    log_path: PathBuf,
+}
+
+impl LoggingArgs {
+    /// Path where input messages are logged; creates log directory if necessary
+    fn log_input_path(&self) -> Result<Option<PathBuf>> {
+        if self.log_input {
+            self.create_log_dir()?;
+            Ok(Some(self.log_path.join("log_in.txt")))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Path where output messages are logged; creates log directory if necessary
+    fn log_output_path(&self) -> Result<Option<PathBuf>> {
+        if self.log_output {
+            self.create_log_dir()?;
+            Ok(Some(self.log_path.join("log_out.txt")))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn create_log_dir(&self) -> Result<()> {
+        Ok(std::fs::create_dir_all(&self.log_path)?)
+    }
+}
 
 /// Run the Symposium ACP meta proxy
 ///
@@ -23,7 +64,7 @@ use sacp_conductor::conductor::Conductor;
 /// - Listens for the Initialize request
 /// - Uses conductor with lazy initialization to build the proxy chain
 /// - Forwards all messages bidirectionally
-pub async fn run() -> Result<()> {
+pub async fn run(logging: &LoggingArgs) -> Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -34,40 +75,17 @@ pub async fn run() -> Result<()> {
 
     tracing::info!("Starting Symposium ACP meta proxy");
 
-    // Create session logger
-    let session_logger = logging::SessionLogger::new().await?;
-    tracing::info!(
-        "Session directory: {}",
-        session_logger.session_dir().display()
-    );
-
-    // Get stage loggers for wrapping transports
-    let stage0_logger = session_logger.stage_logger("stage0".to_string());
-
-    // Wrap stdio with logging
-    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-    let stdout =
-        logging::LoggingWriter::new(tokio::io::stdout().compat_write(), stage0_logger.clone());
-    let stdin = logging::LoggingReader::new(tokio::io::stdin().compat(), stage0_logger);
-
     // Create conductor with lazy initialization
-    // The closure will be called when Initialize is received
-    let conductor = symposium_conductor()?;
-
-    // Convert to handler chain and serve
-    conductor
-        .into_handler_chain()
-        .connect_to(sacp::ByteStreams::new(stdout, stdin))?
-        .serve()
-        .await?;
+    symposium_conductor(logging)?.run(sacp_tokio::Stdio).await?;
 
     Ok(())
 }
 
 /// Create and return the "symposium conductor", which assembles the symposium libraries together.
-pub fn symposium_conductor() -> Result<Conductor> {
+pub fn symposium_conductor(logging: &LoggingArgs) -> Result<Conductor> {
     // Create conductor with lazy initialization using ComponentList trait
     // The closure receives the Initialize request and returns components to spawn
+    let logging = logging.clone();
     let conductor = Conductor::new(
         "symposium".to_string(),
         |init_req| async move {
@@ -75,14 +93,24 @@ pub fn symposium_conductor() -> Result<Conductor> {
 
             // TODO: Examine init_req.capabilities to determine what's needed
 
-            let components: Vec<sacp::DynComponent> = vec![sacp::DynComponent::new(
+            let mut components = vec![];
+
+            if let Some(input_path) = logging.log_input_path()? {
+                components.push(sacp::DynComponent::new(sacp_tee::Tee::new(input_path)));
+            }
+
+            components.push(sacp::DynComponent::new(
                 symposium_crate_sources_proxy::CrateSourcesProxy {},
-            )];
+            ));
 
             // TODO: Add more components based on capabilities
             // - Check for IDE operation capabilities
             // - Spawn ide-ops adapter if missing
             // - Spawn ide-ops component to provide MCP tools
+
+            if let Some(output_path) = logging.log_output_path()? {
+                components.push(sacp::DynComponent::new(sacp_tee::Tee::new(output_path)));
+            }
 
             Ok((init_req, components))
         },
