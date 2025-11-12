@@ -91,16 +91,23 @@ impl LogWriter {
 /// Handler that logs messages passing through
 pub struct TeeHandler {
     log_tx: mpsc::UnboundedSender<LogEntry>,
+    next_id: u64,
 }
 
 impl TeeHandler {
     pub fn new(log_tx: mpsc::UnboundedSender<LogEntry>) -> Self {
-        Self { log_tx }
+        Self { log_tx, next_id: 1 }
     }
 
     fn log_entry(&self, entry: LogEntry) {
         // Fire and forget - if the channel is closed, we just drop the log
         let _ = self.log_tx.send(entry);
+    }
+
+    fn allocate_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
     }
 }
 
@@ -115,11 +122,12 @@ impl JrMessageHandler for TeeHandler {
     ) -> Result<Handled<MessageAndCx>, sacp::Error> {
         match message {
             MessageAndCx::Request(request, request_cx) => {
+                // Allocate a synthetic ID for tracking this request/response pair
+                let synthetic_id = self.allocate_id();
+
                 // Log the outgoing request
-                // Note: We don't have access to the actual request ID from JrRequestCx,
-                // so we use null as a placeholder
                 let json_msg = JsonRpcMessage::Request {
-                    id: serde_json::Value::Null,
+                    id: serde_json::json!(synthetic_id),
                     message: request.clone(),
                 };
                 let entry = LogEntry::new("downstream", json_msg);
@@ -136,7 +144,7 @@ impl JrMessageHandler for TeeHandler {
                     };
 
                     let json_msg = JsonRpcMessage::Reply {
-                        id: serde_json::Value::Null,
+                        id: serde_json::json!(synthetic_id),
                         result: result_value,
                     };
                     let entry = LogEntry::new("upstream", json_msg);
