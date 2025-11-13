@@ -162,19 +162,110 @@ sequenceDiagram
 
 ## State Management
 
-### State Shape
+The extension coordinates three independent pieces of state, treating each as opaque data owned by its respective component.
 
-State is represented as mynah-ui's native tab format returned by `mynahUI.getAllTabs()`. The extension treats this as opaque data - it doesn't parse or understand mynah-ui's internal structure.
+### Three-Part State Model
+
+**1. UI State**
+- Owned by: mynah-ui webview
+- Format: Whatever `mynahUI.getAllTabs()` returns
+- Contains: Tab structure, chat history, UI configuration
+- Extension role: Store and restore, don't parse
+
+**2. Tab-to-Session Mapping**
+- Owned by: Extension
+- Format: `{ [tabId: string]: sessionId: string }`
+- Contains: Which agent session corresponds to which UI tab
+- Extension role: Maintain mapping, coordinate between UI and agent
+
+**3. Session State**
+- Owned by: Agent
+- Format: Agent-specific (opaque to extension)
+- Contains: Session-specific data (for Homer: quote index; for ACP: conversation context)
+- Extension role: Store per-session, pass back to agent on resume
+
+### State Lifecycle
+
+#### Creating a New Tab
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Webview
+    participant Extension
+    participant Agent
+    
+    User->>Webview: Creates new tab
+    Webview->>Webview: Generate tabId (UUID)
+    Webview->>Extension: new-tab (tabId)
+    Extension->>Agent: new-session
+    Agent->>Agent: Initialize session
+    Agent->>Extension: session-created (sessionId)
+    Extension->>Extension: Store tabId → sessionId mapping
+```
+
+#### Saving State
+
+```mermaid
+sequenceDiagram
+    participant Webview
+    participant Extension
+    participant Agent
+    
+    Note over Webview: After user interaction
+    Webview->>Extension: save-ui-state (uiState)
+    Extension->>Extension: Store UI state
+    
+    Note over Agent: After session changes
+    Agent->>Extension: save-session-state (sessionId, sessionState)
+    Extension->>Extension: Store session state
+    
+    Note over Extension: Persist all three pieces to workspaceState
+```
+
+#### Restoring State (on VSCode restart)
+
+```mermaid
+sequenceDiagram
+    participant Extension
+    participant Webview
+    participant Agent
+    
+    Note over Extension: Load from workspaceState
+    Extension->>Extension: Read UI state
+    Extension->>Extension: Read tab→session mappings
+    Extension->>Extension: Read session states
+    
+    Extension->>Webview: restore-ui-state (uiState)
+    Webview->>Webview: Reconstruct tabs and history
+    
+    loop For each tab→session mapping
+        Extension->>Agent: resume-session (sessionId, sessionState)
+        Agent->>Agent: Restore session from state
+    end
+```
+
+### Storage Format
+
+```typescript
+{
+  "uiState": <opaque blob from mynah-ui>,
+  "sessions": {
+    "tab-uuid-1": {
+      "sessionId": "session-uuid-1",
+      "state": <opaque blob from agent>
+    },
+    "tab-uuid-2": {
+      "sessionId": "session-uuid-2", 
+      "state": <opaque blob from agent>
+    }
+  }
+}
+```
 
 **Storage location:** VSCode workspace state (`workspaceState.get/update`)
 
-**Persistence timing:**
-- After each completed response
-- On webview deactivation
-
-**Restoration timing:**
-- On webview initialization
-- On webview activation after being hidden
+**Key principle:** Each component owns its state format. Extension coordinates but doesn't understand the details.
 
 ### Message Buffering
 
@@ -190,51 +281,94 @@ When webview is inactive, the extension buffers messages instead of sending them
 
 ## Agent Management
 
-### Singleton Pattern
+### Agent Responsibilities
 
-The extension spawns a single agent process shared across all tabs. This minimizes startup time and resource usage.
+The agent manages session state and responds to extension requests. Each agent maintains multiple concurrent sessions.
 
-**Agent lifecycle:**
+**Agent interface:**
+- `new-session` → creates new session, returns `sessionId`
+- `resume-session (sessionId, state)` → restores session from saved state
+- `process-prompt (sessionId, prompt)` → generates streaming response
+- `save-session-state (sessionId)` → sends current session state to extension
+
+**Agent owns:**
+- Session ID generation
+- Session state format
+- Session-specific logic
+
+**Agent does NOT know about:**
+- Tab IDs (UI concept)
+- Webview visibility
+- UI state
+
+### Extension as Coordinator
+
+The extension coordinates between UI tabs and agent sessions but doesn't understand either component's internals.
+
+**Extension responsibilities:**
+- Maintain `tabId → sessionId` mapping
+- Route messages between webview and agent
+- Persist all three state pieces
+- Handle webview lifecycle (visibility, buffering)
+
+**Extension owns:**
+- The mapping between tabs and sessions
+- Message routing logic
+- Persistence coordination
+
+**Extension does NOT own:**
+- UI state format (mynah-ui's concern)
+- Session state format (agent's concern)
+
+### Singleton Agent Process
+
+The extension spawns a single agent process shared across all tabs.
+
+**Lifecycle:**
 - Spawn on extension activation (or lazily on first tab)
 - Keep alive for entire VSCode session
+- Supports multiple concurrent sessions
 - Kill on extension deactivation
 
-### Session Mapping
-
-Each tab corresponds to exactly one agent session.
-
-**Mapping:** `tabId (UUID) → session state`
-
-The agent maintains this mapping internally. The extension only needs to route messages using tab IDs.
-
-**Session lifecycle:**
-- Create session when new tab opened
-- Keep active while tab open
-- Clean up session when tab closed
-
-### Multiple Sessions
-
-While the ACP protocol supports multiple concurrent sessions per agent, the current design uses one session per tab for simplicity.
-
-Future enhancement: Could support multiple sessions per tab, but one-to-one mapping is sufficient for initial implementation.
+**Benefits:**
+- Minimizes startup time
+- Reduces resource usage
+- Agent can share context across sessions if desired
 
 ## Implementation Status
 
-### Current (Architecture Complete)
+### Current State
 
+**Working:**
 - ✅ Webview with mynah-ui rendering
 - ✅ Message passing between webview and extension
 - ✅ Streaming response display
-- ✅ State persistence and restoration
 - ✅ UUID-based message identification
 - ✅ Tab lifecycle messaging (new-tab events)
-- ✅ Session management (tabId → HomerActor mapping)
 - ✅ Webview visibility tracking
 - ✅ Message buffering when webview inactive
-- ✅ State restoration and buffer replay on activation
-- ⚠️ HomerActor as placeholder agent (not real ACP)
 
-### Future Phase (ACP Integration)
+**Needs refinement:**
+- ⚠️ State management - currently using simple approach, needs three-part model
+- ⚠️ Session management - currently creates HomerActor per tab, needs async session creation
+- ⚠️ State persistence - currently only saves UI state, needs to save sessions too
+
+### Next Phase: Implement Three-Part State Model
+
+- [ ] Update HomerActor to support session protocol:
+  - [ ] Generate session IDs on creation
+  - [ ] Accept session state on resume
+  - [ ] Emit session state updates
+- [ ] Update extension state management:
+  - [ ] Store three separate pieces (UI, mapping, sessions)
+  - [ ] Handle async session creation
+  - [ ] Restore sessions on startup
+- [ ] Update message protocol:
+  - [ ] `new-session` → `session-created` flow
+  - [ ] `save-session-state` messages from agent
+  - [ ] `resume-session` on restore
+
+### Future Phase: ACP Integration
 
 - [ ] Replace HomerActor with sacp-conductor spawn
 - [ ] Implement ACP protocol communication
