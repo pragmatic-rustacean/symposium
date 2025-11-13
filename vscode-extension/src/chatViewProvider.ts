@@ -1,21 +1,49 @@
 import * as vscode from "vscode";
+import { HomerActor } from "./homerActor";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "symposium.chatView";
+  private _view?: vscode.WebviewView;
+  private _actor: HomerActor;
 
-  constructor(private readonly _extensionUri: vscode.Uri) {}
+  constructor(private readonly _extensionUri: vscode.Uri) {
+    this._actor = new HomerActor();
+  }
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
     context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken,
   ) {
+    this._view = webviewView;
+
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [this._extensionUri],
     };
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+
+    // Handle messages from the webview
+    webviewView.webview.onDidReceiveMessage(async (message) => {
+      switch (message.type) {
+        case "prompt":
+          // Stream the response progressively
+          for await (const chunk of this._actor.processPrompt(message.prompt)) {
+            webviewView.webview.postMessage({
+              type: "response-chunk",
+              messageId: message.messageId,
+              chunk: chunk,
+            });
+          }
+          // Send final message to indicate streaming is complete
+          webviewView.webview.postMessage({
+            type: "response-complete",
+            messageId: message.messageId,
+          });
+          break;
+      }
+    });
   }
 
   private _getHtmlForWebview(webview: vscode.Webview) {
