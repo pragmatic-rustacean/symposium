@@ -19,6 +19,7 @@
 
 - [Overview](./design/implementation-overview.md)
 - [Components](./design/components.md)
+- [VSCode Extension](./design/vscode-extension.md)
 
 # References
 
