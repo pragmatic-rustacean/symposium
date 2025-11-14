@@ -67,6 +67,7 @@ const config: any = {
     texts: {
       mainTitle: "Symposium",
       noTabsOpen: "### Join the symposium by opening a tab",
+      spinnerText: "Discussing with the Symposium...",
     },
   },
   defaults: {
