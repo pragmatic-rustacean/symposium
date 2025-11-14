@@ -50,8 +50,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       },
     });
 
-    // Get agent configuration from settings
+    // Get configuration from settings
     const config = vscode.workspace.getConfiguration("symposium");
+
+    // Get conductor command
+    const conductorCommand = config.get<string>("conductor", "sacp-conductor");
+
+    // Get components
+    const components = config.get<
+      Record<string, { command: string; args?: string[]; disabled?: boolean }>
+    >("components", {
+      "symposium-acp": { command: "symposium-acp", args: [] },
+    });
+
+    // Get enabled components (where disabled !== true)
+    const enabledComponents = Object.entries(components)
+      .filter(([_, component]) => !component.disabled)
+      .map(([_, component]) => {
+        const cmd = component.command;
+        const args = component.args || [];
+        return args.length > 0 ? `${cmd} ${args.join(" ")}` : cmd;
+      });
+
+    // Get agent configuration
     const agents = config.get<
       Record<
         string,
@@ -71,17 +92,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // Build the agent command string (command + args)
+    const agentCmd = currentAgent.command;
+    const agentArgs = currentAgent.args || [];
+    const agentCommandStr =
+      agentArgs.length > 0 ? `${agentCmd} ${agentArgs.join(" ")}` : agentCmd;
+
+    // Build conductor arguments: agent <component1> <component2> ... <agent-command>
+    const conductorArgs = ["agent", ...enabledComponents, agentCommandStr];
+
     console.log(
-      `Initializing agent: ${currentAgentName} (${currentAgent.command})`,
+      `Initializing conductor: ${conductorCommand} ${conductorArgs.join(" ")}`,
     );
 
-    // Initialize the ACP connection
+    // Initialize the ACP connection with conductor
     this.#agent
-      .initialize(
-        currentAgent.command,
-        currentAgent.args || [],
-        currentAgent.env,
-      )
+      .initialize(conductorCommand, conductorArgs, currentAgent.env)
       .catch((err) => {
         console.error("Failed to initialize ACP agent:", err);
         vscode.window.showErrorMessage(
