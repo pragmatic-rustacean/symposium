@@ -7,6 +7,13 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
 
   constructor(extensionUri: vscode.Uri) {
     this.#extensionUri = extensionUri;
+
+    // Listen for configuration changes
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("symposium")) {
+        this.#sendConfiguration();
+      }
+    });
   }
 
   public resolveWebviewView(
@@ -22,6 +29,14 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
     };
 
     webviewView.webview.html = this.#getHtmlForWebview(webviewView.webview);
+
+    // Handle webview visibility changes
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        // Refresh configuration when view becomes visible
+        this.#sendConfiguration();
+      }
+    });
 
     // Handle messages from the webview
     webviewView.webview.onDidReceiveMessage(async (message) => {
@@ -48,6 +63,10 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
           // Toggle component enabled/disabled
           await this.#toggleComponent(message.componentName);
           break;
+        case "toggle-bypass-permissions":
+          // Toggle bypass permissions for an agent
+          await this.#toggleBypassPermissions(message.agentName);
+          break;
         case "open-settings":
           // Open VSCode settings focused on Symposium
           vscode.commands.executeCommand(
@@ -71,6 +90,21 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
         "components",
         components,
         vscode.ConfigurationTarget.Global,
+      );
+      this.#sendConfiguration();
+    }
+  }
+
+  async #toggleBypassPermissions(agentName: string) {
+    const config = vscode.workspace.getConfiguration("symposium");
+    const agents = config.get<Record<string, any>>("agents", {});
+
+    if (agents[agentName]) {
+      const currentValue = agents[agentName].bypassPermissions || false;
+      agents[agentName].bypassPermissions = !currentValue;
+      await config.update("agents", agents, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage(
+        `${agentName}: Bypass permissions ${!currentValue ? "enabled" : "disabled"}`,
       );
       this.#sendConfiguration();
     }
@@ -141,12 +175,25 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
         .component-item.disabled {
             opacity: 0.6;
         }
+        .badges {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
         .badge {
             padding: 2px 8px;
             border-radius: 12px;
             font-size: 11px;
             background: var(--vscode-badge-background);
             color: var(--vscode-badge-foreground);
+        }
+        .badge.bypass {
+            background: var(--vscode-inputValidation-warningBackground);
+            color: var(--vscode-inputValidation-warningForeground);
+            cursor: pointer;
+        }
+        .badge.bypass:hover {
+            opacity: 0.8;
         }
         .toggle {
             font-size: 11px;
@@ -204,13 +251,36 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
             for (const [name, config] of Object.entries(agents)) {
                 const item = document.createElement('div');
                 item.className = 'agent-item' + (name === currentAgent ? ' active' : '');
+
+                const badges = [];
+                if (name === currentAgent) {
+                    badges.push('<span class="badge">Active</span>');
+                }
+                if (config.bypassPermissions) {
+                    badges.push('<span class="badge bypass" title="Click to disable bypass permissions">Bypass Permissions</span>');
+                }
+
                 item.innerHTML = \`
                     <span>\${name}</span>
-                    \${name === currentAgent ? '<span class="badge">Active</span>' : ''}
+                    <div class="badges">\${badges.join('')}</div>
                 \`;
-                item.onclick = () => {
+
+                // Handle clicking on the agent name (switch agent)
+                const nameSpan = item.querySelector('span:first-child');
+                nameSpan.onclick = (e) => {
+                    e.stopPropagation();
                     vscode.postMessage({ type: 'set-current-agent', agentName: name });
                 };
+
+                // Handle clicking on the bypass badge (toggle bypass)
+                const bypassBadge = item.querySelector('.badge.bypass');
+                if (bypassBadge) {
+                    bypassBadge.onclick = (e) => {
+                        e.stopPropagation();
+                        vscode.postMessage({ type: 'toggle-bypass-permissions', agentName: name });
+                    };
+                }
+
                 list.appendChild(item);
             }
         }
