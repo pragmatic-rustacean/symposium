@@ -108,27 +108,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // Get the current agent configuration from settings
             const config = AgentConfiguration.fromSettings();
 
-            // Get or create an actor for this configuration
-            const actor = await this.#getOrCreateActor(config);
-
             // Store the configuration for this tab
             this.#tabToConfig.set(message.tabId, config);
-
-            // Create a new agent session for this tab
-            const agentSessionId = await actor.createSession();
-            this.#tabToAgentSession.set(message.tabId, agentSessionId);
-            this.#agentSessionToTab.set(agentSessionId, message.tabId);
 
             // Initialize message tracking for this tab
             this.#messageQueues.set(message.tabId, []);
             this.#nextMessageIndex.set(message.tabId, 0);
 
-            // Update tab title to show which agent is being used
+            // Update tab title immediately (before spawning agent)
             this.#sendToWebview({
               type: "set-tab-title",
               tabId: message.tabId,
               title: config.agentName,
             });
+
+            // Get or create an actor for this configuration (may spawn process)
+            const actor = await this.#getOrCreateActor(config);
+
+            // Create a new agent session for this tab
+            const agentSessionId = await actor.createSession();
+            this.#tabToAgentSession.set(message.tabId, agentSessionId);
+            this.#agentSessionToTab.set(agentSessionId, message.tabId);
 
             console.log(
               `Created agent session ${agentSessionId} for tab ${message.tabId} using ${config.describe()}`,
