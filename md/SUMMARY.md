@@ -19,6 +19,15 @@
 
 - [Overview](./design/implementation-overview.md)
 - [Components](./design/components.md)
+- [VSCode Extension](./design/vscode-extension/architecture.md)
+    - [Architecture](./design/vscode-extension/architecture.md)
+    - [Message Protocol](./design/vscode-extension/message-protocol.md)
+    - [Tool Authorization](./design/vscode-extension/tool-authorization.md)
+    - [State Persistence](./design/vscode-extension/state-persistence.md)
+    - [Webview Lifecycle](./design/vscode-extension/webview-lifecycle.md)
+    - [Testing](./design/vscode-extension/testing.md)
+    - [Testing Implementation](./design/vscode-extension/testing-implementation.md)
+    - [Implementation Status](./design/vscode-extension/implementation-status.md)
 
 # References
 
@@ -28,6 +37,8 @@
     you might want.
 -->
 
+- [MynahUI GUI Capabilities](./references/mynah-ui-guide.md)
+- [VSCode Webview Lifecycle](./references/vscode-webview-lifecycle.md)
 - [Language Server Protocol Overview](./research/lsp-overview/README.md)
     - [Base Protocol](./research/lsp-overview/base-protocol.md)
     - [Language Features](./research/lsp-overview/language-features.md)
