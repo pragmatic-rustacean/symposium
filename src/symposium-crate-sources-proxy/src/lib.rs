@@ -3,10 +3,10 @@
 //! An ACP proxy that provides the `rust_crate_query` MCP tool for researching
 //! Rust crate sources via dedicated sub-agent sessions.
 
-pub mod crate_research_mcp;
-pub mod crate_sources_mcp;
-pub mod eg;
-pub mod research_agent;
+mod crate_research_mcp;
+mod crate_sources_mcp;
+mod eg;
+mod research_agent;
 
 use anyhow::Result;
 use fxhash::FxHashSet;
