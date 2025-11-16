@@ -1,7 +1,10 @@
-//! Sub-agent MCP service provided to research sessions.
+//! MCP service for research sub-agent sessions.
 //!
-//! This service provides tools for investigating Rust crate sources and
-//! returning research findings to the waiting user-facing tool call.
+//! Provides tools that research agents use to investigate Rust crate sources:
+//! - `get_rust_crate_source`: Locates and extracts crate sources from crates.io
+//! - `return_response_to_user`: Sends research findings back to complete the query
+//!
+//! This service is attached to NewSessionRequest when spawning research sessions.
 
 use crate::eg;
 use rmcp::{

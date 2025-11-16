@@ -1,7 +1,9 @@
-//! User-facing MCP service that provides the rust_crate_query tool.
+//! User-facing MCP service for researching Rust crates.
 //!
-//! This service spawns research sub-sessions to investigate Rust crate sources
-//! and return synthesized findings to the agent.
+//! Provides the `rust_crate_query` tool which allows agents to request research
+//! about Rust crate source code by describing what information they need.
+//! The service coordinates with research_agent to spawn sub-sessions that
+//! investigate crate sources and return synthesized findings.
 
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},

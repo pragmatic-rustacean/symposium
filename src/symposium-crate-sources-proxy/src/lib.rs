@@ -3,9 +3,10 @@
 //! An ACP proxy that provides the `rust_crate_query` MCP tool for researching
 //! Rust crate sources via dedicated sub-agent sessions.
 
+pub mod crate_research_mcp;
+pub mod crate_sources_mcp;
 pub mod eg;
-pub mod sub_agent;
-pub mod user_facing;
+pub mod research_agent;
 
 use anyhow::Result;
 use fxhash::FxHashSet;
@@ -14,11 +15,7 @@ use rmcp::{
     model::*,
     tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
 };
-use sacp::{
-    component::Component,
-    schema::{NewSessionRequest, NewSessionResponse},
-    JrConnectionCx,
-};
+use sacp::component::Component;
 use sacp_proxy::{AcpProxyExt, McpServiceRegistry};
 use sacp_rmcp::McpServiceRegistryRmcpExt;
 use schemars::JsonSchema;
@@ -43,73 +40,20 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-/// Handle a single research request by spawning a sub-agent session.
-///
-/// This function:
-/// 1. Sends NewSessionRequest with the sub-agent MCP server (containing get_rust_crate_source + return_response_to_user)
-/// 2. Receives session_id from the agent
-/// 3. Registers the session_id in shared ResearchState so the main loop knows this is a research session
-/// 4. Sends PromptRequest with the user's research prompt
-/// 5. Waits for the sub-agent to call return_response_to_user
-/// 6. Sends the response back through request.response_tx (owned by this function)
-/// 7. Cleans up the session_id from ResearchState
-async fn handle_research_request(
-    cx: JrConnectionCx,
-    request: user_facing::ResearchRequest,
-) -> Result<(), sacp::Error> {
-    tracing::info!(
-        "Handling research request for crate '{}' version {:?}",
-        request.crate_name,
-        request.crate_version
-    );
-
-    let NewSessionResponse {
-        session_id,
-        modes: _,
-        meta: _,
-    } = cx
-        .send_request(NewSessionRequest {
-            cwd: todo!(),
-            mcp_servers: todo!(),
-            meta: todo!(),
-        })
-        .block_task()
-        .await?;
-
-    // TODO: Implementation steps:
-    // 1. Send NewSessionRequest with sub-agent MCP server
-    // 2. Get session_id back
-    // 3. Store session_id → request.response_tx in shared state
-    // 4. Send PromptRequest(session_id, request.prompt)
-    // 5. Wait for sub-agent to call return_response_to_user
-
-    // Placeholder: immediately send a response
-    let placeholder_response = format!(
-        "Research request received for '{}'. Session spawning not yet implemented.",
-        request.crate_name
-    );
-
-    request
-        .response_tx
-        .send(placeholder_response)
-        .map_err(|_| sacp::Error::internal_error())?;
-
-    Ok(())
-}
-
 /// A proxy which forwards all messages to its successor, adding access to the rust-crate-query MCP server.
 pub struct CrateSourcesProxy;
 
 impl Component for CrateSourcesProxy {
     async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
         // Create channel for research requests
-        let (research_tx, mut research_rx) = mpsc::channel::<user_facing::ResearchRequest>(32);
+        let (research_tx, mut research_rx) =
+            mpsc::channel::<crate_research_mcp::ResearchRequest>(32);
 
         // Create MCP service registry with the user-facing service
         let research_tx_clone = research_tx.clone();
         let mcp_registry = McpServiceRegistry::default()
             .with_rmcp_server("rust-crate-query", move || {
-                user_facing::CrateQueryService::new(research_tx_clone.clone())
+                crate_research_mcp::CrateQueryService::new(research_tx_clone.clone())
             })?;
 
         // MCP registry for research sub-agent sessions.
@@ -127,7 +71,7 @@ impl Component for CrateSourcesProxy {
                 while let Some(request) = research_rx.recv().await {
                     cx.spawn({
                         let cx = cx.clone();
-                        async move { handle_research_request(cx, request).await }
+                        async move { research_agent::run(cx, request).await }
                     })?;
                 }
 
