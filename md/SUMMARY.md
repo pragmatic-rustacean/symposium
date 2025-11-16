@@ -19,8 +19,8 @@
 
 - [Overview](./design/implementation-overview.md)
 - [Components](./design/components.md)
+- [Rust Crate Sources](./design/rust-crate-sources.md)
 - [VSCode Extension](./design/vscode-extension/architecture.md)
-    - [Architecture](./design/vscode-extension/architecture.md)
     - [Message Protocol](./design/vscode-extension/message-protocol.md)
     - [Tool Authorization](./design/vscode-extension/tool-authorization.md)
     - [State Persistence](./design/vscode-extension/state-persistence.md)
