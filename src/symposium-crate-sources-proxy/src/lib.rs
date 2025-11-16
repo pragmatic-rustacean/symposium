@@ -1,9 +1,10 @@
 //! Rust Crate Sources Proxy
 //!
-//! An ACP proxy that provides the `get_rust_crate_source` MCP tool for searching
-//! and extracting Rust crate sources from crates.io.
+//! An ACP proxy that provides the `rust_crate_query` MCP tool for researching
+//! Rust crate sources via dedicated sub-agent sessions.
 
 pub mod eg;
+pub mod user_facing;
 
 use anyhow::Result;
 use rmcp::{
