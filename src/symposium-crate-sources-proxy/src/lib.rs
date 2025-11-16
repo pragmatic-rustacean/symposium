@@ -18,6 +18,7 @@ use sacp_proxy::{AcpProxyExt, McpServiceRegistry};
 use sacp_rmcp::McpServiceRegistryRmcpExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 /// Run the proxy as a standalone binary connected to stdio
 pub async fn run() -> Result<()> {
@@ -46,13 +47,53 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-/// A proxy which forwards all messages to its successor, adding access to the rust-crate-sources MCP server.
+/// A proxy which forwards all messages to its successor, adding access to the rust-crate-query MCP server.
 pub struct CrateSourcesProxy;
 
 impl Component for CrateSourcesProxy {
     async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
+        // Create channel for research requests
+        let (research_tx, mut research_rx) = mpsc::channel::<user_facing::ResearchRequest>(32);
+
+        // Create MCP service registry with the user-facing service
+        let research_tx_clone = research_tx.clone();
         let mcp_registry = McpServiceRegistry::default()
-            .with_rmcp_server("rust-crate-sources", RustCrateSourcesService::new)?;
+            .with_rmcp_server("rust-crate-query", move || {
+                user_facing::CrateQueryService::new(research_tx_clone.clone())
+            })?;
+
+        // Spawn background task to handle research requests
+        tokio::spawn(async move {
+            tracing::info!("Research request handler started");
+
+            while let Some(request) = research_rx.recv().await {
+                tracing::info!(
+                    "Received research request for crate '{}' version {:?}",
+                    request.crate_name,
+                    request.crate_version
+                );
+                tracing::debug!("Research prompt: {}", request.prompt);
+
+                // TODO: Implementation steps:
+                // 1. Send NewSessionRequest with sub-agent MCP server
+                // 2. Get session_id back
+                // 3. Store session_id → request.response_tx in shared state
+                // 4. Send PromptRequest(session_id, request.prompt)
+                // 5. Wait for sub-agent to call return_response_to_user
+
+                // Placeholder: immediately send a response
+                let placeholder_response = format!(
+                    "Research request received for '{}'. Session spawning not yet implemented.",
+                    request.crate_name
+                );
+
+                if let Err(_) = request.response_tx.send(placeholder_response) {
+                    tracing::error!("Failed to send response - receiver dropped");
+                }
+            }
+
+            tracing::info!("Research request handler shutting down");
+        });
 
         sacp::JrHandlerChain::new()
             .name("rust-crate-sources-proxy")

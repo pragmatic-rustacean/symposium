@@ -10,6 +10,20 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tokio::sync::{mpsc, oneshot};
+
+/// Request to start a research session for a Rust crate
+#[derive(Debug)]
+pub struct ResearchRequest {
+    /// Name of the Rust crate to research
+    pub crate_name: String,
+    /// Optional semver range (e.g., "1.0", "^1.2", "~1.2.3")
+    pub crate_version: Option<String>,
+    /// Research prompt describing what information is needed
+    pub prompt: String,
+    /// Channel to send the research findings back
+    pub response_tx: oneshot::Sender<String>,
+}
 
 /// Parameters for the rust_crate_query tool
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -32,12 +46,15 @@ pub struct RustCrateQueryParams {
 #[derive(Clone)]
 pub struct CrateQueryService {
     tool_router: ToolRouter<CrateQueryService>,
+    /// Channel to send research requests to the background task
+    research_tx: mpsc::Sender<ResearchRequest>,
 }
 
 impl CrateQueryService {
-    pub fn new() -> Self {
+    pub fn new(research_tx: mpsc::Sender<ResearchRequest>) -> Self {
         Self {
             tool_router: Self::tool_router(),
+            research_tx,
         }
     }
 }
@@ -63,19 +80,29 @@ impl CrateQueryService {
         );
         tracing::debug!("Research prompt: {}", prompt);
 
-        // TODO: Implementation steps:
-        // 1. Create oneshot channel for response
-        // 2. Send NewSessionRequest with sub-agent MCP server
-        // 3. Register session_id in shared state
-        // 4. Send PromptRequest with the research prompt
-        // 5. Await response on channel
-        // 6. Return response as tool result
+        // Create oneshot channel for the response
+        let (response_tx, response_rx) = oneshot::channel();
 
-        // Placeholder implementation
-        let response = format!(
-            "Research request received for crate '{}'. Implementation pending.",
-            crate_name
-        );
+        // Send research request to background task
+        let request = ResearchRequest {
+            crate_name: crate_name.clone(),
+            crate_version,
+            prompt,
+            response_tx,
+        };
+
+        self.research_tx.send(request).await.map_err(|_| {
+            McpError::internal_error("Failed to send research request to background task", None)
+        })?;
+
+        tracing::debug!("Research request sent, awaiting response");
+
+        // Wait for the response from the research session
+        let response = response_rx.await.map_err(|_| {
+            McpError::internal_error("Research session closed without sending response", None)
+        })?;
+
+        tracing::info!("Research complete for '{}'", crate_name);
 
         Ok(CallToolResult::success(vec![Content::text(response)]))
     }
