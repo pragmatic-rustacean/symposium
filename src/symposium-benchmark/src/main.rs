@@ -4,15 +4,51 @@
 //! the response against expected results using another Claude Code instance.
 
 use anyhow::Result;
+use clap::Parser;
 use sacp::{ByteStreams, Component, DynComponent};
 use sacp_conductor::conductor::Conductor;
 use sacp_tokio::AcpAgent;
+use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::io::duplex;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
+#[derive(Parser, Debug)]
+#[command(name = "symposium-benchmark")]
+#[command(about = "Benchmark harness for rust-crate-sources-proxy")]
+struct Args {
+    /// Benchmark to run (serde_from_value, etc.)
+    #[arg(short, long)]
+    benchmark: Option<String>,
+
+    /// Directory to save raw output files
+    #[arg(short, long, default_value = "benchmark-output")]
+    output_dir: PathBuf,
+
+    /// List available benchmarks
+    #[arg(short, long)]
+    list: bool,
+}
+
+struct Benchmark {
+    name: &'static str,
+    prompt: &'static str,
+    expected: &'static str,
+}
+
+const BENCHMARKS: &[Benchmark] = &[Benchmark {
+    name: "serde_from_value",
+    prompt: "Please use the rust_crate_query tool to research the signature of the \
+                 serde_json::from_value API and describe what inputs it accepts",
+    expected: "The response should describe that serde_json::from_value takes a \
+                   serde_json::Value and deserializes it into a type T. It should mention \
+                   that it returns a Result<T, Error>.",
+}];
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -21,17 +57,44 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    tracing::info!("Symposium benchmark starting");
+    // List benchmarks if requested
+    if args.list {
+        println!("Available benchmarks:");
+        for benchmark in BENCHMARKS {
+            println!("  - {}", benchmark.name);
+        }
+        return Ok(());
+    }
 
-    // Define test prompt and expected behavior
-    let research_prompt = "Please use the rust_crate_query tool to research the signature of the \
-         serde_json::from_value API and describe what inputs it accepts";
+    // Determine which benchmarks to run
+    let benchmarks_to_run: Vec<&Benchmark> = if let Some(name) = &args.benchmark {
+        BENCHMARKS.iter().filter(|b| b.name == name).collect()
+    } else {
+        BENCHMARKS.iter().collect()
+    };
 
-    let expected_result = "The response should describe that serde_json::from_value takes a \
-         serde_json::Value and deserializes it into a type T. It should mention \
-         that it returns a Result<T, Error>.";
+    if benchmarks_to_run.is_empty() {
+        anyhow::bail!(
+            "Benchmark '{}' not found. Use --list to see available benchmarks.",
+            args.benchmark.unwrap()
+        );
+    }
 
-    tracing::info!("Running research prompt");
+    // Create output directory
+    std::fs::create_dir_all(&args.output_dir)?;
+
+    // Run benchmarks
+    for benchmark in benchmarks_to_run {
+        tracing::info!("Running benchmark: {}", benchmark.name);
+        run_benchmark(benchmark, &args.output_dir).await?;
+    }
+
+    Ok(())
+}
+
+async fn run_benchmark(benchmark: &Benchmark, output_dir: &PathBuf) -> Result<()> {
+    let research_prompt = benchmark.prompt;
+    let expected_result = benchmark.expected;
 
     // Create components: rust-crate-sources-proxy + Claude Code
     let proxy = symposium_crate_sources_proxy::CrateSourcesProxy;
@@ -94,8 +157,25 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    println!("\n=== VALIDATION RESULT ===");
-    println!("{}", validation_result);
+    // Save outputs to files
+    let prompt_file = output_dir.join(format!("{}_prompt.txt", benchmark.name));
+    let response_file = output_dir.join(format!("{}_response.txt", benchmark.name));
+    let validation_file = output_dir.join(format!("{}_validation.txt", benchmark.name));
+    let expected_file = output_dir.join(format!("{}_expected.txt", benchmark.name));
+
+    std::fs::write(&prompt_file, research_prompt)?;
+    std::fs::write(&response_file, &response)?;
+    std::fs::write(&validation_file, &validation_result)?;
+    std::fs::write(&expected_file, expected_result)?;
+
+    tracing::info!("Output saved to:");
+    tracing::info!("  Prompt: {}", prompt_file.display());
+    tracing::info!("  Response: {}", response_file.display());
+    tracing::info!("  Expected: {}", expected_file.display());
+    tracing::info!("  Validation: {}", validation_file.display());
+
+    println!("\n=== BENCHMARK: {} ===", benchmark.name);
+    println!("VALIDATION RESULT:\n{}", validation_result);
     println!("========================\n");
 
     // Clean up
