@@ -90,7 +90,6 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-            ~/.cargo/bin/
           key: ${{ runner.os }}-cargo-vscode-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-vscode-
@@ -98,9 +97,9 @@ jobs:
 
       - name: Install ACP tools
         run: |
-          cargo install elizacp
-          cargo install sacp-conductor
-          cargo install --path src/symposium-acp
+          cargo install --force elizacp
+          cargo install --force sacp-conductor
+          cargo install --force --path src/symposium-acp
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

@@ -5,21 +5,21 @@ members = [
     "ci",
     "src/symposium-acp",
     "src/symposium-crate-sources-proxy",
-    "src/cli-agent-util",
-    "src/sacp-tee",
+    "src/cli-agent-util", "src/symposium-benchmark",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 sacp = { version = "1.0.0" }
-sacp-proxy = { version = "1.0.0" }
+sacp-proxy = { version = "2.0.0" }
 sacp-tokio = { version = "1.0.0" }
-sacp-conductor = { version = "1.0.0" }
-sacp-rmcp = { version = "0.8" }
+sacp-conductor = { version = "2.0.0" }
+sacp-rmcp = { version = "0.8.2" }
 jsonrpcmsg = "0.1.2"
 
 # Core async runtime
 tokio = { version = "1.0", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3.31"
 
 # Serialization
@@ -42,7 +42,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rmcp = { version = "0.8", features = ["server", "transport-io", "schemars"] }
 
 # Sparkle integration
-sparkle = { package = "sparkle-mcp", git = "https://github.com/nikomatsakis/sparkle.git", branch = "main" }
+sparkle = { package = "sparkle-mcp", version = "0.1.4" }
 
 # CLI parsing
 clap = { version = "4.0", features = ["derive"] }
@@ -50,3 +50,4 @@ clap = { version = "4.0", features = ["derive"] }
 # Setup tool dependencies
 which = "6.0"
 home = "0.5"
+fxhash = "0.2.1"

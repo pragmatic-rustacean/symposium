@@ -1,6 +1,8 @@
 # macOS
 .DS_Store
 
+taskspaces
+
 # Swift/Xcode
 /.build
 symposium/macos-app/.build/

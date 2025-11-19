@@ -12,10 +12,6 @@ path = "src/main.rs"
 sacp-proxy.workspace = true
 sacp.workspace = true
 sacp-conductor.workspace = true
-sacp-rmcp.workspace = true
-
-# MCP SDK
-rmcp = { workspace = true, features = ["server"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
@@ -36,6 +32,9 @@ schemars = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# String formatting
+indoc = "2.0"
+
 # Rust crate extraction dependencies
 regex = "1.10"
 semver = "1.0"
@@ -47,3 +46,4 @@ reqwest = { version = "0.12", features = ["blocking", "json"] }
 home = "0.5"
 dirs = "5.0"
 sacp-tokio.workspace = true
+fxhash.workspace = true
