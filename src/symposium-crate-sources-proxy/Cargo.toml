@@ -47,3 +47,7 @@ home = "0.5"
 dirs = "5.0"
 sacp-tokio.workspace = true
 fxhash.workspace = true
+
+[dev-dependencies]
+elizacp = { path = "../../../symposium-acp/src/elizacp" }
+yopo = "1.0"
