@@ -138,12 +138,12 @@ pub fn symposium_conductor(args: &SymposiumArgs) -> Result<Conductor> {
                 symposium_crate_sources_proxy::CrateSourcesProxy {},
             ));
 
-            // if args.sparkle {
-            //     components.push(sacp::DynComponent::new(sparkle::SparkleComponent::new()));
-            // }
+            if args.sparkle {
+                components.push(sacp::DynComponent::new(sparkle::SparkleComponent::new()));
+            }
 
             // TODO: Add more components based on capabilities
-            // - Check for IDE operation capabilities
+            // -car Check for IDE operation capabilities
             // - Spawn ide-ops adapter if missing
             // - Spawn ide-ops component to provide MCP tools
 
