@@ -14,17 +14,20 @@ const vscode = acquireVsCodeApi();
 
 let mynahUI: MynahUI;
 
-// Track accumulated agent response per tab
+// Track accumulated agent response per tab (for current text segment)
 const tabAgentResponses: { [tabId: string]: string } = {};
 
-// Track current message ID per tab (for MynahUI)
+// Track current ANSWER_STREAM message ID per tab
 const tabCurrentMessageId: { [tabId: string]: string } = {};
+
+// Track what type of content the current stream is: "text" or "tool"
+const tabCurrentStreamType: { [tabId: string]: "text" | "tool" } = {};
 
 // Track active tool calls per tab: toolCallId → messageId
 const tabToolCalls: { [tabId: string]: { [toolCallId: string]: string } } = {};
 
 // Tool call status type (matches ACP)
-type ToolCallStatus = "pending" | "running" | "completed" | "errored";
+type ToolCallStatus = "pending" | "running" | "completed" | "failed";
 
 // Tool call info from extension
 interface ToolCallInfo {
@@ -34,6 +37,13 @@ interface ToolCallInfo {
   kind?: string;
   rawInput?: Record<string, unknown>;
   rawOutput?: Record<string, unknown>;
+}
+
+// Slash command info from extension
+interface SlashCommandInfo {
+  name: string;
+  description: string;
+  inputHint?: string;
 }
 
 // Track which messages we've seen per tab and mynah UI state
@@ -156,7 +166,7 @@ function getToolStatusIcon(status: ToolCallStatus): string {
       return "⚙️";
     case "completed":
       return "✓";
-    case "errored":
+    case "failed":
       return "✗";
     default:
       return "•";
@@ -170,7 +180,7 @@ function getToolStatus(
   switch (status) {
     case "completed":
       return "success";
-    case "errored":
+    case "failed":
       return "error";
     case "running":
       return "info";
@@ -225,32 +235,27 @@ function handleToolCall(tabId: string, toolCall: ToolCallInfo) {
   // Check if we already have a card for this tool call
   const existingMessageId = tabToolCalls[tabId][toolCall.toolCallId];
   if (existingMessageId) {
-    // Update existing card
+    // Update existing card via messageId (works even if it's not the last card)
     updateToolCallCard(tabId, existingMessageId, toolCall);
     return;
   }
 
-  // Create new card for this tool call
+  // Create new ANSWER_STREAM card for this tool call
+  // This automatically ends any previous stream (text or tool)
   const messageId = `tool-${toolCall.toolCallId}`;
   tabToolCalls[tabId][toolCall.toolCallId] = messageId;
+  tabCurrentMessageId[tabId] = messageId;
+  tabCurrentStreamType[tabId] = "tool";
 
   const icon = getToolStatusIcon(toolCall.status);
-  const shimmer =
-    toolCall.status === "running" || toolCall.status === "pending";
   const details = buildToolDetails(toolCall);
-
-  // Use summary to make details collapsible:
-  // - body: the collapsed view (always visible as header)
-  // - summary.content: the expanded details
-  // - summary.isCollapsed: start collapsed
-  // Replace backticks with single quotes for display
   const displayTitle = toolCall.title.replace(/`/g, "'");
 
+  // Use ANSWER_STREAM so this becomes the :last-child and spinner works
   mynahUI.addChatItem(tabId, {
-    type: ChatItemType.ANSWER,
+    type: ChatItemType.ANSWER_STREAM,
     messageId,
     status: getToolStatus(toolCall.status),
-    shimmer,
     body: `${icon} \`${displayTitle}\``,
     summary: details
       ? {
@@ -410,6 +415,7 @@ const config: any = {
     // Generate message ID for MynahUI tracking
     const messageId = uuidv4();
     tabCurrentMessageId[tabId] = messageId;
+    tabCurrentStreamType[tabId] = "text";
 
     // Add placeholder for the streaming answer
     mynahUI.addChatItem(tabId, {
@@ -481,6 +487,25 @@ window.addEventListener("message", (event: MessageEvent) => {
       `[PERF] Webview received chunk at ${receiveTime}, extension->webview delay=${extensionDelay}ms, length=${message.text.length}`,
     );
 
+    // Check if we need to start a new text stream
+    // (either no current stream, or current stream is a tool card)
+    if (
+      !tabCurrentMessageId[message.tabId] ||
+      tabCurrentStreamType[message.tabId] !== "text"
+    ) {
+      // Start a new text stream - this ends any previous stream (tool card)
+      const newMessageId = uuidv4();
+      tabCurrentMessageId[message.tabId] = newMessageId;
+      tabCurrentStreamType[message.tabId] = "text";
+      tabAgentResponses[message.tabId] = ""; // Reset accumulated text for new segment
+
+      mynahUI.addChatItem(message.tabId, {
+        type: ChatItemType.ANSWER_STREAM,
+        messageId: newMessageId,
+        body: "",
+      });
+    }
+
     // Append text to accumulated response
     const appendStart = Date.now();
     tabAgentResponses[message.tabId] =
@@ -509,9 +534,10 @@ window.addEventListener("message", (event: MessageEvent) => {
       mynahUI.endMessageStream(message.tabId, messageId);
     }
 
-    // Clear accumulated response and message ID
+    // Clear accumulated response, message ID, and stream type
     delete tabAgentResponses[message.tabId];
     delete tabCurrentMessageId[message.tabId];
+    delete tabCurrentStreamType[message.tabId];
   } else if (message.type === "set-tab-title") {
     // Update the tab title
     mynahUI.updateStore(message.tabId, {
@@ -526,6 +552,25 @@ window.addEventListener("message", (event: MessageEvent) => {
   } else if (message.type === "tool-call-update") {
     // Handle tool call update
     handleToolCall(message.tabId, message.toolCall);
+  } else if (message.type === "available-commands") {
+    // Convert ACP commands to MynahUI quickActionCommands format
+    const commands = message.commands as SlashCommandInfo[];
+    const quickActionCommands = [
+      {
+        commands: commands.map((cmd) => ({
+          command: `/${cmd.name}`,
+          description: cmd.description,
+          placeholder: cmd.inputHint,
+        })),
+      },
+    ];
+
+    console.log("Setting quick action commands:", quickActionCommands);
+
+    // Update the tab store with the commands
+    mynahUI.updateStore(message.tabId, {
+      quickActionCommands,
+    });
   }
 
   // Update lastSeenIndex and save state

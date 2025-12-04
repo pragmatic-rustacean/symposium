@@ -25,6 +25,15 @@ export interface ToolCallInfo {
 }
 
 /**
+ * Slash command information passed to callbacks
+ */
+export interface SlashCommandInfo {
+  name: string;
+  description: string;
+  inputHint?: string;
+}
+
+/**
  * Callback interface for agent events
  */
 export interface AcpAgentCallbacks {
@@ -35,6 +44,10 @@ export interface AcpAgentCallbacks {
   ) => Promise<acp.RequestPermissionResponse>;
   onToolCall?: (agentSessionId: string, toolCall: ToolCallInfo) => void;
   onToolCallUpdate?: (agentSessionId: string, toolCall: ToolCallInfo) => void;
+  onAvailableCommands?: (
+    agentSessionId: string,
+    commands: SlashCommandInfo[],
+  ) => void;
 }
 
 /**
@@ -89,6 +102,11 @@ class SymposiumClient implements acp.Client {
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
         if (update.content.type === "text") {
+          const text = update.content.text;
+          logger.info("agent", "Text chunk", {
+            length: text.length,
+            text: text.length > 50 ? text.slice(0, 50) + "..." : text,
+          });
           this.callbacks.onAgentText(params.sessionId, update.content.text);
         }
         break;
@@ -132,6 +150,23 @@ class SymposiumClient implements acp.Client {
         // Clean up cache when tool call completes
         if (update.status === "completed" || update.status === "failed") {
           this.toolCallTitles.delete(update.toolCallId);
+        }
+        break;
+      }
+      case "available_commands_update": {
+        const commands: SlashCommandInfo[] = update.availableCommands.map(
+          (cmd) => ({
+            name: cmd.name,
+            description: cmd.description,
+            inputHint: cmd.input?.hint,
+          }),
+        );
+        logger.info("agent", "Available commands update", {
+          count: commands.length,
+          commands: commands.map((c) => c.name),
+        });
+        if (this.callbacks.onAvailableCommands) {
+          this.callbacks.onAvailableCommands(params.sessionId, commands);
         }
         break;
       }

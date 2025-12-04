@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import * as acp from "@agentclientprotocol/sdk";
-import { AcpAgentActor, ToolCallInfo } from "./acpAgentActor";
+import { AcpAgentActor, ToolCallInfo, SlashCommandInfo } from "./acpAgentActor";
 import { AgentConfiguration } from "./agentConfiguration";
 import { logger } from "./extension";
 import { v4 as uuidv4 } from "uuid";
@@ -31,6 +31,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       agentName: string;
     }
   > = new Map(); // approvalId → promise resolvers
+
+  // Queue for notifications that arrive before session mapping is established
+  // agentSessionId → array of pending messages to send to webview
+  #pendingSessionNotifications: Map<string, any[]> = new Map();
 
   constructor(
     extensionUri: vscode.Uri,
@@ -153,6 +157,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           });
         }
       },
+      onAvailableCommands: (
+        agentSessionId: string,
+        commands: SlashCommandInfo[],
+      ) => {
+        const message = {
+          type: "available-commands",
+          commands,
+        };
+        this.#sendSessionNotification(agentSessionId, message);
+      },
     });
 
     // Initialize the actor
@@ -222,6 +236,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             );
             this.#tabToAgentSession.set(message.tabId, agentSessionId);
             this.#agentSessionToTab.set(agentSessionId, message.tabId);
+
+            // Replay any notifications that arrived before mapping was established
+            this.#replayPendingSessionNotifications(
+              agentSessionId,
+              message.tabId,
+            );
 
             logger.info("agent", "Created agent session", {
               agentSessionId,
@@ -458,6 +478,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /**
+   * Send a session notification to the webview, or queue it if the session
+   * mapping isn't established yet.
+   *
+   * @param agentSessionId - The agent session ID
+   * @param message - The message to send (without tabId - will be added)
+   */
+  #sendSessionNotification(agentSessionId: string, message: any) {
+    const tabId = this.#agentSessionToTab.get(agentSessionId);
+
+    if (tabId) {
+      // Session mapping exists, send directly
+      this.#sendToWebview({ ...message, tabId });
+    } else {
+      // Queue until session mapping is established
+      logger.info("agent", "Queuing notification (session not yet mapped)", {
+        agentSessionId,
+        messageType: message.type,
+      });
+      const queue = this.#pendingSessionNotifications.get(agentSessionId) ?? [];
+      queue.push(message);
+      this.#pendingSessionNotifications.set(agentSessionId, queue);
+    }
+  }
+
+  /**
+   * Replay any queued notifications for a session after the mapping is established.
+   */
+  #replayPendingSessionNotifications(agentSessionId: string, tabId: string) {
+    const queue = this.#pendingSessionNotifications.get(agentSessionId);
+    if (queue && queue.length > 0) {
+      logger.info("agent", "Replaying queued notifications", {
+        agentSessionId,
+        tabId,
+        count: queue.length,
+      });
+      for (const message of queue) {
+        this.#sendToWebview({ ...message, tabId });
+      }
+      this.#pendingSessionNotifications.delete(agentSessionId);
+    }
+  }
+
   #onWebviewVisible() {
     // Visibility change detected - webview will send "webview-ready" when initialized
     logger.info("webview", "Webview became visible");
@@ -575,6 +638,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           );
           this.#tabToAgentSession.set(message.tabId, agentSessionId);
           this.#agentSessionToTab.set(agentSessionId, message.tabId);
+
+          // Replay any notifications that arrived before mapping was established
+          this.#replayPendingSessionNotifications(
+            agentSessionId,
+            message.tabId,
+          );
 
           logger.info("agent", "Agent session created", {
             tabId: message.tabId,
