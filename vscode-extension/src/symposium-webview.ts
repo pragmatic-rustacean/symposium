@@ -243,15 +243,15 @@ function handleToolCall(tabId: string, toolCall: ToolCallInfo) {
   // - body: the collapsed view (always visible as header)
   // - summary.content: the expanded details
   // - summary.isCollapsed: start collapsed
-  // Escape backticks in title to prevent markdown breaking
-  const escapedTitle = toolCall.title.replace(/`/g, "\\`");
+  // Replace backticks with single quotes for display
+  const displayTitle = toolCall.title.replace(/`/g, "'");
 
   mynahUI.addChatItem(tabId, {
     type: ChatItemType.ANSWER,
     messageId,
     status: getToolStatus(toolCall.status),
     shimmer,
-    body: `${icon} \`${escapedTitle}\``,
+    body: `${icon} \`${displayTitle}\``,
     summary: details
       ? {
           isCollapsed: true,
@@ -274,13 +274,13 @@ function updateToolCallCard(
     toolCall.status === "running" || toolCall.status === "pending";
   const details = buildToolDetails(toolCall);
 
-  // Escape backticks in title to prevent markdown breaking
-  const escapedTitle = toolCall.title.replace(/`/g, "\\`");
+  // Replace backticks with single quotes for display
+  const displayTitle = toolCall.title.replace(/`/g, "'");
 
   mynahUI.updateChatAnswerWithMessageId(tabId, messageId, {
     status: getToolStatus(toolCall.status),
     shimmer,
-    body: `${icon} \`${escapedTitle}\``,
+    body: `${icon} \`${displayTitle}\``,
     summary: details
       ? {
           isCollapsed: true,
@@ -393,6 +393,11 @@ const config: any = {
       prompt: prompt.prompt,
     });
 
+    // Show loading/thinking indicator
+    mynahUI.updateStore(tabId, {
+      loadingChat: true,
+    });
+
     // Add the user's prompt to the chat
     mynahUI.addChatItem(tabId, {
       type: ChatItemType.PROMPT,
@@ -493,6 +498,11 @@ window.addEventListener("message", (event: MessageEvent) => {
       `[PERF] Append: ${appendEnd - appendStart}ms, UI update: ${uiUpdateEnd - uiUpdateStart}ms, total: ${uiUpdateEnd - receiveTime}ms`,
     );
   } else if (message.type === "agent-complete") {
+    // Hide loading/thinking indicator
+    mynahUI.updateStore(message.tabId, {
+      loadingChat: false,
+    });
+
     // Mark the stream as complete using the message ID
     const messageId = tabCurrentMessageId[message.tabId];
     if (messageId) {
