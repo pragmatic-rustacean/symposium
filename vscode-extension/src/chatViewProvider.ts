@@ -52,8 +52,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   } | null = null;
   #selectionDisposable: vscode.Disposable | null = null;
 
-  // Track the active/selected tab in the webview
-  #activeTabId: string | null = null;
+  // Pending requests for selected tab ID
+  #selectedTabRequests: Map<
+    string,
+    { resolve: (tabId: string | undefined) => void }
+  > = new Map();
 
   constructor(
     extensionUri: vscode.Uri,
@@ -537,9 +540,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // Store the configuration for this tab
             this.#tabToConfig.set(message.tabId, config);
 
-            // New tab becomes the active tab
-            this.#activeTabId = message.tabId;
-
             // Initialize message tracking for this tab
             this.#messageQueues.set(message.tabId, []);
             this.#nextMessageIndex.set(message.tabId, 0);
@@ -757,12 +757,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           logger.info("webview", message.message, message.data);
           break;
 
-        case "tab-change":
-          // User switched tabs in the webview
-          this.#activeTabId = message.tabId;
-          logger.info("webview", "Active tab changed", {
-            tabId: message.tabId,
-          });
+        case "selected-tab-response":
+          // Response to a get-selected-tab request
+          const tabRequest = this.#selectedTabRequests.get(message.requestId);
+          if (tabRequest) {
+            this.#selectedTabRequests.delete(message.requestId);
+            tabRequest.resolve(message.tabId);
+          }
           break;
 
         case "approval-response":
@@ -1018,27 +1019,58 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Request the currently selected tab ID from the webview.
+   * Returns undefined if no tab is selected.
+   */
+  async #getSelectedTabId(): Promise<string | undefined> {
+    if (!this.#view) {
+      return undefined;
+    }
+
+    const requestId = `req-${Date.now()}-${Math.random()}`;
+
+    return new Promise((resolve) => {
+      this.#selectedTabRequests.set(requestId, { resolve });
+
+      this.#view!.webview.postMessage({
+        type: "get-selected-tab",
+        requestId,
+      });
+
+      // Timeout after 1 second
+      setTimeout(() => {
+        if (this.#selectedTabRequests.has(requestId)) {
+          this.#selectedTabRequests.delete(requestId);
+          resolve(undefined);
+        }
+      }, 1000);
+    });
+  }
+
+  /**
    * Add a frozen selection as context to the active tab's prompt input.
    * Called when user triggers "Discuss in Symposium" code action.
+   * Creates a new tab if none exists.
    */
-  public addSelectionToPrompt(selection: {
+  public async addSelectionToPrompt(selection: {
     filePath: string;
     relativePath: string;
     startLine: number;
     endLine: number;
     text: string;
-  }): void {
-    // Use the active tab, or fall back to the first available tab
-    const tabIds = Array.from(this.#tabToAgentSession.keys());
-    if (tabIds.length === 0) {
-      logger.error("context", "No tabs available to add selection to");
-      return;
-    }
+  }): Promise<void> {
+    // Ask webview for the currently selected tab
+    let tabId = await this.#getSelectedTabId();
 
-    const tabId =
-      this.#activeTabId && tabIds.includes(this.#activeTabId)
-        ? this.#activeTabId
-        : tabIds[0];
+    // If no tab is selected, tell webview to create one and use that
+    if (!tabId) {
+      logger.info("context", "No tab selected, requesting new tab creation");
+      tabId = await this.#requestNewTab();
+      if (!tabId) {
+        logger.error("context", "Failed to create new tab");
+        return;
+      }
+    }
 
     // Send message to webview to add this as a custom context item
     this.#sendToWebview({
@@ -1051,6 +1083,34 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       tabId,
       path: selection.relativePath,
       lines: `${selection.startLine}-${selection.endLine}`,
+    });
+  }
+
+  /**
+   * Request the webview to create a new tab and return its ID.
+   */
+  async #requestNewTab(): Promise<string | undefined> {
+    if (!this.#view) {
+      return undefined;
+    }
+
+    const requestId = `req-${Date.now()}-${Math.random()}`;
+
+    return new Promise((resolve) => {
+      this.#selectedTabRequests.set(requestId, { resolve });
+
+      this.#view!.webview.postMessage({
+        type: "create-tab",
+        requestId,
+      });
+
+      // Timeout after 5 seconds (tab creation might take a moment)
+      setTimeout(() => {
+        if (this.#selectedTabRequests.has(requestId)) {
+          this.#selectedTabRequests.delete(requestId);
+          resolve(undefined);
+        }
+      }, 5000);
     });
   }
 

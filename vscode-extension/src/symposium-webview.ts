@@ -390,14 +390,6 @@ const config: any = {
     console.log("Tab removed:", tabId);
     saveState();
   },
-  onTabChange: (tabId: string) => {
-    // Notify extension when user switches tabs
-    console.log("Tab changed:", tabId);
-    vscode.postMessage({
-      type: "tab-change",
-      tabId: tabId,
-    });
-  },
   onContextSelected: (contextItem: any, tabId: string) => {
     // User selected a file from the @ context menu
     // The command field contains the file path
@@ -569,6 +561,29 @@ function saveState() {
 window.addEventListener("message", (event: MessageEvent) => {
   const message = event.data;
   const receiveTime = Date.now();
+
+  // Handle request/response messages (not indexed)
+  if (message.type === "get-selected-tab") {
+    const selectedTabId = mynahUI.getSelectedTabId();
+    vscode.postMessage({
+      type: "selected-tab-response",
+      requestId: message.requestId,
+      tabId: selectedTabId,
+    });
+    return;
+  }
+
+  if (message.type === "create-tab") {
+    // updateStore with empty string tabId creates a new tab and returns the ID
+    const newTabId = mynahUI.updateStore("", {});
+    console.log("Created new tab:", newTabId);
+    vscode.postMessage({
+      type: "selected-tab-response",
+      requestId: message.requestId,
+      tabId: newTabId,
+    });
+    return;
+  }
 
   // Check if we've already seen this message
   const currentLastSeen = lastSeenIndex[message.tabId] ?? -1;
