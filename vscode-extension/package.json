@@ -129,6 +129,10 @@
       {
         "command": "symposium.openChat",
         "title": "Open Symposium Chat"
+      },
+      {
+        "command": "symposium.discussSelection",
+        "title": "Discuss in Symposium"
       }
     ],
     "viewsContainers": {

@@ -1003,6 +1003,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </html>`;
   }
 
+  /**
+   * Add a frozen selection as context to the active tab's prompt input.
+   * Called when user triggers "Discuss in Symposium" code action.
+   */
+  public addSelectionToPrompt(selection: {
+    filePath: string;
+    relativePath: string;
+    startLine: number;
+    endLine: number;
+    text: string;
+  }): void {
+    // Get the first/active tab (for now, use the first one - could be improved)
+    const tabIds = Array.from(this.#tabToAgentSession.keys());
+    if (tabIds.length === 0) {
+      logger.error("context", "No tabs available to add selection to");
+      return;
+    }
+
+    const tabId = tabIds[0];
+
+    // Send message to webview to add this as a custom context item
+    this.#sendToWebview({
+      type: "add-context-to-prompt",
+      tabId,
+      selection,
+    });
+
+    logger.info("context", "Added frozen selection to prompt", {
+      tabId,
+      path: selection.relativePath,
+      lines: `${selection.startLine}-${selection.endLine}`,
+    });
+  }
+
   dispose() {
     // Dispose all actors
     for (const actor of this.#configToActor.values()) {

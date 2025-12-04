@@ -779,6 +779,39 @@ window.addEventListener("message", (event: MessageEvent) => {
     mynahUI.updateStore(message.tabId, {
       contextCommands,
     });
+  } else if (message.type === "add-context-to-prompt") {
+    // Add a frozen selection as context to the prompt input
+    const selection = message.selection as {
+      filePath: string;
+      relativePath: string;
+      startLine: number;
+      endLine: number;
+      text: string;
+    };
+
+    // Encode selection info the same way we do for "Current Selection"
+    const lineRange =
+      selection.startLine === selection.endLine
+        ? `L${selection.startLine}`
+        : `L${selection.startLine}-${selection.endLine}`;
+
+    const selectionRef = JSON.stringify({
+      type: "selection",
+      filePath: selection.filePath,
+      relativePath: selection.relativePath,
+      startLine: selection.startLine,
+      endLine: selection.endLine,
+      text: selection.text,
+    });
+
+    const contextItem = {
+      command: `Selection from ${selection.relativePath}`,
+      description: `${selection.relativePath}:${lineRange}`,
+      id: btoa(selectionRef),
+    };
+
+    console.log("Adding custom context to prompt:", contextItem);
+    mynahUI.addCustomContextToPrompt(message.tabId, [contextItem]);
   } else if (message.type === "agent-error") {
     // Display error message and stop loading
     mynahUI.updateStore(message.tabId, {

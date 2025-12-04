@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { ChatViewProvider } from "./chatViewProvider";
 import { SettingsViewProvider } from "./settingsViewProvider";
+import { DiscussCodeActionProvider } from "./discussCodeActionProvider";
 import { Logger } from "./logger";
 import { v4 as uuidv4 } from "uuid";
 
@@ -63,6 +64,68 @@ export function activate(context: vscode.ExtensionContext) {
         language: "json",
       });
       await vscode.window.showTextDocument(doc);
+    }),
+  );
+
+  // Register "Discuss in Symposium" code action provider
+  context.subscriptions.push(
+    vscode.languages.registerCodeActionsProvider(
+      "*", // All file types
+      new DiscussCodeActionProvider(),
+      {
+        providedCodeActionKinds:
+          DiscussCodeActionProvider.providedCodeActionKinds,
+      },
+    ),
+  );
+
+  // Register command for "Discuss in Symposium" code action
+  context.subscriptions.push(
+    vscode.commands.registerCommand("symposium.discussSelection", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.selection.isEmpty) {
+        logger.info("command", "discussSelection: no selection");
+        return;
+      }
+
+      // Capture the selection now (frozen)
+      const selection = editor.selection;
+      const text = editor.document.getText(selection);
+      const filePath = editor.document.uri.fsPath;
+
+      // Get relative path
+      const workspaceFolder = vscode.workspace.getWorkspaceFolder(
+        editor.document.uri,
+      );
+      let relativePath = filePath;
+      if (workspaceFolder) {
+        const prefix = workspaceFolder.uri.fsPath;
+        if (filePath.startsWith(prefix)) {
+          relativePath = filePath.slice(prefix.length);
+          if (relativePath.startsWith("/") || relativePath.startsWith("\\")) {
+            relativePath = relativePath.slice(1);
+          }
+        }
+      }
+
+      const selectionData = {
+        filePath,
+        relativePath,
+        startLine: selection.start.line + 1, // 1-indexed
+        endLine: selection.end.line + 1,
+        text,
+      };
+
+      logger.info("command", "discussSelection triggered", {
+        path: relativePath,
+        lines: `${selectionData.startLine}-${selectionData.endLine}`,
+      });
+
+      // Focus the chat panel
+      await vscode.commands.executeCommand("symposium.chatView.focus");
+
+      // Add the selection to the prompt
+      chatProvider.addSelectionToPrompt(selectionData);
     }),
   );
 
