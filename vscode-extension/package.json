@@ -91,6 +91,11 @@
           "type": "string",
           "default": "Claude Code",
           "description": "Name of the currently selected agent"
+        },
+        "symposium.traceDir": {
+          "type": "string",
+          "default": "",
+          "description": "Directory to write trace files for debugging. Leave empty to disable tracing. Traces can be viewed with sacp-trace-viewer."
         }
       }
     },

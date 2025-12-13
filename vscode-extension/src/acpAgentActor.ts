@@ -234,8 +234,16 @@ export class AcpAgentActor {
     const agentCmd = agent.command;
     const agentArgs = agent.args || [];
 
-    // Build conductor arguments: -- <agent-command> [agent-args...]
-    const conductorArgs = ["--", agentCmd, ...agentArgs];
+    // Build conductor arguments: [--trace-dir <dir>] -- <agent-command> [agent-args...]
+    const conductorArgs: string[] = [];
+
+    // Add trace directory if configured
+    const traceDir = vsConfig.get<string>("traceDir", "");
+    if (traceDir) {
+      conductorArgs.push("--trace-dir", traceDir);
+    }
+
+    conductorArgs.push("--", agentCmd, ...agentArgs);
 
     logger.important("agent", "Spawning ACP agent", {
       command: conductorCommand,

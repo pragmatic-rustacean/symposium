@@ -14,6 +14,7 @@ use anyhow::Result;
 use clap::Parser;
 use sacp::Component;
 use sacp_tokio::AcpAgent;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "symposium-acp-agent")]
@@ -32,6 +33,11 @@ struct Cli {
     #[arg(long, default_value = "false")]
     no_crate_researcher: bool,
 
+    /// Enable trace logging to the specified directory.
+    /// Traces are written as timestamped .jsons files viewable with sacp-trace-viewer.
+    #[arg(long)]
+    trace_dir: Option<PathBuf>,
+
     /// The agent command and arguments (e.g., npx -y @zed-industries/claude-code-acp)
     #[arg(last = true, required = true, num_args = 1..)]
     agent: Vec<String>,
@@ -45,11 +51,15 @@ async fn main() -> Result<()> {
     let agent: AcpAgent = AcpAgent::from_args(&cli.agent)?;
 
     // Run Symposium with the agent as the downstream component
-    symposium_acp_proxy::Symposium::new()
+    let mut symposium = symposium_acp_proxy::Symposium::new()
         .sparkle(!cli.no_sparkle)
-        .crate_sources_proxy(!cli.no_crate_researcher)
-        .serve(agent)
-        .await?;
+        .crate_sources_proxy(!cli.no_crate_researcher);
+
+    if let Some(trace_dir) = cli.trace_dir {
+        symposium = symposium.trace_dir(trace_dir);
+    }
+
+    symposium.serve(agent).await?;
 
     Ok(())
 }

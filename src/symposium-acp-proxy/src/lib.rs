@@ -14,10 +14,12 @@
 use anyhow::Result;
 use sacp::Component;
 use sacp_conductor::{Conductor, McpBridgeMode};
+use std::path::PathBuf;
 
 pub struct Symposium {
     crate_sources_proxy: bool,
     sparkle: bool,
+    trace_dir: Option<PathBuf>,
 }
 
 impl Symposium {
@@ -25,6 +27,7 @@ impl Symposium {
         Symposium {
             sparkle: true,
             crate_sources_proxy: true,
+            trace_dir: None,
         }
     }
 
@@ -37,6 +40,13 @@ impl Symposium {
         self.crate_sources_proxy = enable;
         self
     }
+
+    /// Enable trace logging to a directory.
+    /// Traces will be written as `<timestamp>.jsons` files.
+    pub fn trace_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.trace_dir = Some(dir.into());
+        self
+    }
 }
 
 impl sacp::Component for Symposium {
@@ -44,8 +54,10 @@ impl sacp::Component for Symposium {
         let Self {
             crate_sources_proxy,
             sparkle,
+            trace_dir,
         } = self;
-        Conductor::new(
+
+        let mut conductor = Conductor::new(
             "symposium".to_string(),
             move |init_req| async move {
                 tracing::info!("Building proxy chain based on capabilities");
@@ -72,8 +84,19 @@ impl sacp::Component for Symposium {
                 Ok((init_req, components))
             },
             McpBridgeMode::default(),
-        )
-        .run(client)
-        .await
+        );
+
+        // Enable tracing if a directory was specified
+        if let Some(dir) = trace_dir {
+            std::fs::create_dir_all(&dir).map_err(sacp::Error::into_internal_error)?;
+            let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+            let trace_path = dir.join(format!("{}.jsons", timestamp));
+            conductor = conductor
+                .trace_to_path(&trace_path)
+                .map_err(sacp::Error::into_internal_error)?;
+            tracing::info!("Tracing to {}", trace_path.display());
+        }
+
+        conductor.run(client).await
     }
 }
