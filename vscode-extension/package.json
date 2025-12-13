@@ -109,6 +109,11 @@
           ],
           "default": "",
           "description": "Log level for the symposium-acp-agent process. Logs appear in the Symposium output channel. Leave empty to disable."
+        },
+        "symposium.requireModifierToSend": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, Enter adds a newline and Shift+Enter (or Cmd+Enter on Mac) sends the prompt. When disabled (default), Enter sends and Shift+Enter adds a newline."
         }
       }
     },

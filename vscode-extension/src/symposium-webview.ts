@@ -5,6 +5,7 @@ import { MynahUI, ChatItem, ChatItemType } from "@aws/mynah-ui";
 declare const acquireVsCodeApi: any;
 declare const window: any & {
   SYMPOSIUM_EXTENSION_ACTIVATION_ID: string;
+  SYMPOSIUM_REQUIRE_MODIFIER_TO_SEND: boolean;
 };
 
 // Import uuid - note: webpack will bundle this for browser
@@ -355,6 +356,9 @@ const config: any = {
       noTabsOpen: "### Join the symposium by opening a tab",
       spinnerText: "Discussing with the Symposium...",
     },
+    // When true, Enter adds newline and Shift/Cmd+Enter sends
+    // When false (default), Enter sends and Shift+Enter adds newline
+    requireModifierToSendPrompt: window.SYMPOSIUM_REQUIRE_MODIFIER_TO_SEND,
   },
   defaults: {
     store: {

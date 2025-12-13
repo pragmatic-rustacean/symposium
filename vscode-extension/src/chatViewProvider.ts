@@ -1020,6 +1020,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       vscode.Uri.joinPath(this.#extensionUri, "out", "webview.js"),
     );
 
+    // Get the requireModifierToSend setting
+    const config = vscode.workspace.getConfiguration("symposium");
+    const requireModifierToSend = config.get<boolean>(
+      "requireModifierToSend",
+      false,
+    );
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1043,6 +1050,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <script>
         // Embed extension activation ID so it's available immediately
         window.SYMPOSIUM_EXTENSION_ACTIVATION_ID = "${this.#extensionActivationId}";
+        // Embed settings for MynahUI config
+        window.SYMPOSIUM_REQUIRE_MODIFIER_TO_SEND = ${requireModifierToSend};
     </script>
     <script src="${scriptUri}"></script>
 </body>
