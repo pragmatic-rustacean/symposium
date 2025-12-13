@@ -43,6 +43,7 @@ yarn-error.log*
 
 # Editor files
 .vscode/settings.json
+!vscode-extension/test-workspace/.vscode/settings.json
 .idea/
 *.swp
 *.swo
