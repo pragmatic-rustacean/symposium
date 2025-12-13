@@ -12,7 +12,7 @@
 //! 5. Bidirectionally forward all subsequent messages
 
 use anyhow::Result;
-use sacp::Component;
+use sacp::{Component, DynComponent};
 use sacp_conductor::{Conductor, McpBridgeMode};
 use std::path::PathBuf;
 
@@ -20,6 +20,7 @@ pub struct Symposium {
     crate_sources_proxy: bool,
     sparkle: bool,
     trace_dir: Option<PathBuf>,
+    agent: Option<DynComponent>,
 }
 
 impl Symposium {
@@ -28,6 +29,7 @@ impl Symposium {
             sparkle: true,
             crate_sources_proxy: true,
             trace_dir: None,
+            agent: None,
         }
     }
 
@@ -41,6 +43,11 @@ impl Symposium {
         self
     }
 
+    pub fn agent<C: Component>(mut self, agent: C) -> Self {
+        self.agent = Some(DynComponent::new(agent));
+        self
+    }
+
     /// Enable trace logging to a directory.
     /// Traces will be written as `<timestamp>.jsons` files.
     pub fn trace_dir(mut self, dir: impl Into<PathBuf>) -> Self {
@@ -51,12 +58,15 @@ impl Symposium {
 
 impl sacp::Component for Symposium {
     async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
+        tracing::debug!("Symposium::serve starting");
         let Self {
             crate_sources_proxy,
             sparkle,
             trace_dir,
+            agent,
         } = self;
 
+        tracing::debug!("Creating conductor");
         let mut conductor = Conductor::new(
             "symposium".to_string(),
             move |init_req| async move {
@@ -74,6 +84,10 @@ impl sacp::Component for Symposium {
 
                 if sparkle {
                     components.push(sacp::DynComponent::new(sparkle::SparkleComponent::new()));
+                }
+
+                if let Some(agent) = agent {
+                    components.push(agent);
                 }
 
                 // TODO: Add more components based on capabilities
@@ -97,6 +111,7 @@ impl sacp::Component for Symposium {
             tracing::info!("Tracing to {}", trace_path.display());
         }
 
+        tracing::debug!("Starting conductor.run()");
         conductor.run(client).await
     }
 }
