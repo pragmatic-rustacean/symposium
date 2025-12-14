@@ -3,5 +3,9 @@
 src/**
 .gitignore
 tsconfig.json
+webpack.config.js
 **/*.map
 **/*.ts
+../vendor/**
+node_modules/**
+test-workspace/**
