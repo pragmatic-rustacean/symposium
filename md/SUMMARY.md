@@ -18,6 +18,7 @@
 # Design and implementation
 
 - [Overview](./design/implementation-overview.md)
+- [Distribution](./design/distribution.md)
 - [Components](./design/components.md)
 - [Rust Crate Sources](./design/rust-crate-sources.md)
 - [VSCode Extension](./design/vscode-extension/architecture.md)
