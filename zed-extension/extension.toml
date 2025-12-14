@@ -1,0 +1,36 @@
+id = "symposium"
+name = "Symposium"
+version = "0.1.0"
+schema_version = 1
+authors = ["Niko Matsakis <niko@alum.mit.edu>"]
+description = "Collaborative AI with Sparkle identity and Rust crate research"
+repository = "https://github.com/symposium-dev/symposium"
+
+[agent_servers.symposium]
+name = "Symposium"
+icon = "./icons/symposium.svg"
+
+[agent_servers.symposium.targets.darwin-aarch64]
+archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-arm64.tar.gz"
+cmd = "./symposium-acp-agent"
+args = ["--", "npx", "-y", "@anthropic-ai/claude-code@latest"]
+
+[agent_servers.symposium.targets.darwin-x86_64]
+archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-x64.tar.gz"
+cmd = "./symposium-acp-agent"
+args = ["--", "npx", "-y", "@anthropic-ai/claude-code@latest"]
+
+[agent_servers.symposium.targets.linux-x86_64]
+archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-x64.tar.gz"
+cmd = "./symposium-acp-agent"
+args = ["--", "npx", "-y", "@anthropic-ai/claude-code@latest"]
+
+[agent_servers.symposium.targets.linux-aarch64]
+archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-arm64.tar.gz"
+cmd = "./symposium-acp-agent"
+args = ["--", "npx", "-y", "@anthropic-ai/claude-code@latest"]
+
+[agent_servers.symposium.targets.windows-x86_64]
+archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-windows-x64.zip"
+cmd = "./symposium-acp-agent.exe"
+args = ["--", "npx", "-y", "@anthropic-ai/claude-code@latest"]
