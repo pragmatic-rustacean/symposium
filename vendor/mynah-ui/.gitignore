@@ -7,7 +7,7 @@ node_modules
 *.zip
 **/.DS_Store
 .idea
-package-lock.json
+# package-lock.json - we track this for reproducible builds
 .gitcommit
 .vscode
 __results__/
