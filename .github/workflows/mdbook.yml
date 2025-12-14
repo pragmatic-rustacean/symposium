@@ -57,8 +57,8 @@ jobs:
 
       - name: Install mdBook
         run: |
-          cargo install --version ${MDBOOK_VERSION} mdbook
-          cargo install mdbook-mermaid
+          cargo install --force --version ${MDBOOK_VERSION} mdbook
+          cargo install --force mdbook-mermaid
 
       - name: Setup Pages
         id: pages
