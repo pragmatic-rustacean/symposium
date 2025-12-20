@@ -9,6 +9,7 @@
     "url": "https://github.com/symposium/symposium.git"
   },
   "license": "MIT",
+  "icon": "resources/extension-icon.png",
   "engines": {
     "vscode": "^1.93.0"
   },
