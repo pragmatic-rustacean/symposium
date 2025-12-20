@@ -26,14 +26,39 @@ export class NoTabs {
 
     if (config.noTabsImage != null) {
       const opacity = config.noTabsImageOpacity ?? 0.25;
+      const background = config.noTabsImageBackground ?? '';
+      const borderRadius = config.noTabsImageBorderRadius ?? '';
+      const padding = config.noTabsImagePadding ?? '';
+      const filter = config.noTabsImageFilter ?? '';
+
+      // Build style string for container
+      const containerStyles = [
+        background !== '' ? `background-color: ${background}` : '',
+        borderRadius !== '' ? `border-radius: ${borderRadius}` : '',
+        padding !== '' ? `padding: ${padding}` : ''
+      ].filter(s => s !== '').join('; ');
+
+      // Build style string for image
+      const imageStyles = [
+        `opacity: ${opacity}`,
+        filter !== '' ? `filter: ${filter}` : ''
+      ].filter(s => s !== '').join('; ');
+
       iconWrapperChild = {
-        type: 'img',
-        classNames: [ 'mynah-no-tabs-image' ],
-        attributes: {
-          src: config.noTabsImage,
-          alt: '',
-          style: `opacity: ${opacity}`
-        }
+        type: 'div',
+        classNames: [ 'mynah-no-tabs-image-container' ],
+        attributes: containerStyles !== '' ? { style: containerStyles } : {},
+        children: [
+          {
+            type: 'img',
+            classNames: [ 'mynah-no-tabs-image' ],
+            attributes: {
+              src: config.noTabsImage,
+              alt: '',
+              style: imageStyles
+            }
+          }
+        ]
       };
     } else {
       iconWrapperChild = new Icon({ icon: config.noTabsIcon ?? MynahIcons.TABS }).render;

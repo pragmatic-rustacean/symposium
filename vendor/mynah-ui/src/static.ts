@@ -846,6 +846,22 @@ export interface ConfigOptions {
    * Opacity for the no-tabs image (0-1). Defaults to 0.25.
    */
   noTabsImageOpacity?: number;
+  /**
+   * Background color for the no-tabs image container (e.g., "rgba(128,128,128,0.15)").
+   */
+  noTabsImageBackground?: string;
+  /**
+   * Border radius for the no-tabs image container (e.g., "12px").
+   */
+  noTabsImageBorderRadius?: string;
+  /**
+   * Padding for the no-tabs image container (e.g., "16px").
+   */
+  noTabsImagePadding?: string;
+  /**
+   * CSS filter for the no-tabs image (e.g., "brightness(1.5)").
+   */
+  noTabsImageFilter?: string;
   enableSearchKeyboardShortcut?: boolean;
   typewriterStackTime?: number;
   typewriterMaxWordTime?: number;
