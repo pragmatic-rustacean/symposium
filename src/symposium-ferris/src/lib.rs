@@ -29,7 +29,6 @@ use sacp::{ProxyToConductor, mcp_server::McpServer};
 mod component;
 mod crate_sources;
 pub mod error;
-mod mcp;
 mod rust_researcher;
 
 pub use component::FerrisComponent;
@@ -82,9 +81,20 @@ impl Ferris {
     /// This may be used by tools that need workspace context.
     pub fn into_mcp_server(
         self,
-        cwd: impl AsRef<Path>,
+        #[expect(unused_variables)] cwd: impl AsRef<Path>,
     ) -> McpServer<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
-        mcp::build_server(self, cwd.as_ref().to_path_buf())
+        let builder = McpServer::builder("ferris".to_string()).instructions(indoc::indoc! {"
+            Rust development tools provided by Ferris.
+
+            Available tools help with:
+            - Fetching Rust crate source code for inspection
+            - Researching Rust crate APIs and usage patterns
+        "});
+
+        let builder = crate::crate_sources::mcp::register(builder, self.crate_sources);
+        let builder = crate::rust_researcher::register(builder, self.rust_researcher);
+
+        builder.build()
     }
 
     // -------------------------------------------------------------------------
