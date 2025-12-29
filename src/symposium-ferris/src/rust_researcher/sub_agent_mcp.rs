@@ -4,6 +4,7 @@
 //! - `get_rust_crate_source`: Locates and extracts crate sources from crates.io
 //! - `return_response_to_user`: Sends research findings back to complete the query
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use sacp::{ProxyToConductor, mcp_server::McpServer};
@@ -29,10 +30,11 @@ struct ReturnResponseOutput {
 /// to collect responses that will be returned to the calling agent.
 pub fn build_server(
     responses: Arc<Mutex<Vec<serde_json::Value>>>,
+    cwd: PathBuf,
 ) -> McpServer<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
     let builder = McpServer::builder("ferris-research".to_string());
 
-    let builder = crate::crate_sources::mcp::register(builder, true);
+    let builder = crate::crate_sources::mcp::register(builder, true, cwd);
 
     let builder = builder
         .tool_fn_mut(

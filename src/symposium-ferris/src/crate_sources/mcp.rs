@@ -1,10 +1,12 @@
 //! The crate_source tool - fetch Rust crate sources by name and version.
 
+use std::path::PathBuf;
+
 use sacp::{ProxyToConductor, mcp_server::McpServerBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::Ferris;
+use crate::crate_sources::RustCrateFetch;
 
 /// Parameters for the crate_source tool
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -32,6 +34,7 @@ pub struct CrateSourceOutput {
 pub fn register(
     builder: McpServerBuilder<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>>,
     enabled: bool,
+    cwd: PathBuf,
 ) -> McpServerBuilder<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
     builder.tool_fn_mut(
         "crate_sources",
@@ -67,7 +70,7 @@ pub fn register(
                 "Fetching crate sources"
             );
 
-            let mut fetch = Ferris::rust_crate(&crate_name);
+            let mut fetch = RustCrateFetch::new(&crate_name, &cwd);
             if let Some(version_spec) = version {
                 fetch = fetch.version(&version_spec);
             }

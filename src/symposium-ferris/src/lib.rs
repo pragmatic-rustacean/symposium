@@ -22,7 +22,7 @@
 //!     .into_mcp_server(cwd);
 //! ```
 
-use std::path::Path;
+use std::path::PathBuf;
 
 use sacp::{ProxyToConductor, mcp_server::McpServer};
 
@@ -78,11 +78,13 @@ impl Ferris {
     /// Build an MCP server with the configured tools
     ///
     /// The `cwd` parameter specifies the working directory for the session.
-    /// This may be used by tools that need workspace context.
+    /// This is used by tools that need workspace context (e.g., cargo metadata).
     pub fn into_mcp_server(
         self,
-        #[expect(unused_variables)] cwd: impl AsRef<Path>,
+        cwd: impl Into<PathBuf>,
     ) -> McpServer<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
+        let cwd = cwd.into();
+
         let builder = McpServer::builder("ferris".to_string()).instructions(indoc::indoc! {"
             Rust development tools provided by Ferris.
 
@@ -91,8 +93,8 @@ impl Ferris {
             - Researching Rust crate APIs and usage patterns
         "});
 
-        let builder = crate::crate_sources::mcp::register(builder, self.crate_sources);
-        let builder = crate::rust_researcher::register(builder, self.rust_researcher);
+        let builder = crate::crate_sources::mcp::register(builder, self.crate_sources, cwd.clone());
+        let builder = crate::rust_researcher::register(builder, self.rust_researcher, cwd);
 
         builder.build()
     }
@@ -108,12 +110,12 @@ impl Ferris {
     ///
     /// # Example
     /// ```ignore
-    /// let result = Ferris::rust_crate("serde")
+    /// let result = Ferris::rust_crate("serde", ".")
     ///     .version("1.0")
     ///     .fetch()
     ///     .await?;
     /// ```
-    pub fn rust_crate(name: &str) -> RustCrateFetch {
-        RustCrateFetch::new(name)
+    pub fn rust_crate(name: &str, cwd: impl Into<std::path::PathBuf>) -> RustCrateFetch {
+        RustCrateFetch::new(name, cwd)
     }
 }

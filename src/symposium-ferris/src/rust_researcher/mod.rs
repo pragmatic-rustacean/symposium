@@ -3,6 +3,7 @@
 //! This tool spawns a sub-agent session that has access to crate source fetching
 //! tools. The sub-agent researches the user's question and returns findings.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use indoc::formatdoc;
@@ -47,6 +48,7 @@ pub struct RustResearcherOutput {
 pub fn register(
     builder: McpServerBuilder<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>>,
     enabled: bool,
+    cwd: PathBuf,
 ) -> McpServerBuilder<ProxyToConductor, impl sacp::JrResponder<ProxyToConductor>> {
     builder.tool_fn_mut(
         "rust_researcher",
@@ -68,7 +70,7 @@ pub fn register(
                     "rust_researcher tool is not enabled",
                 ));
             }
-            run_research(input, mcp_cx).await
+            run_research(input, mcp_cx, cwd.clone()).await
         },
         sacp::tool_fn_mut!(),
     )
@@ -102,6 +104,7 @@ fn build_research_prompt(user_prompt: &str) -> String {
 async fn run_research(
     input: RustResearcherParams,
     mcp_cx: McpContext<ProxyToConductor>,
+    cwd: PathBuf,
 ) -> Result<RustResearcherOutput, sacp::Error> {
     let RustResearcherParams {
         crate_name,
@@ -120,13 +123,9 @@ async fn run_research(
 
     // Create a channel for receiving responses from the sub-agent's return_response_to_user calls
     let responses: Arc<Mutex<Vec<serde_json::Value>>> = Default::default();
-    let mcp_server = sub_agent_mcp::build_server(responses.clone());
+    let mcp_server = sub_agent_mcp::build_server(responses.clone(), cwd.clone());
 
-    // Spawn the sub-agent session with the per-instance MCP server
-    // Use current directory since we don't have access to session cwd here
-    let cwd = std::env::current_dir().unwrap_or_default();
-
-    cx.build_session(cwd)
+    cx.build_session(&cwd)
         .with_mcp_server(mcp_server)?
         .block_task()
         .run_until(async |mut active_session| {
