@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 # Symposium components
 symposium-acp-proxy = { path = "../symposium-acp-proxy" }
-symposium-crate-sources-proxy = { path = "../symposium-crate-sources-proxy" }
+symposium-ferris = { path = "../symposium-ferris" }
 
 # ACP framework
 sacp.workspace = true

@@ -1,19 +1,27 @@
 //! Version resolution for Rust crates
 
-use crate::{Result, FerrisError};
-use cargo_metadata::{MetadataCommand, CargoOpt};
+use std::path::PathBuf;
+
+use crate::{FerrisError, Result};
+use cargo_metadata::{CargoOpt, MetadataCommand};
 use semver::{Version, VersionReq};
 
 /// Handles version resolution using the three-tier strategy
-pub struct VersionResolver;
+pub struct VersionResolver {
+    cwd: PathBuf,
+}
 
 impl VersionResolver {
-    pub fn new() -> Self {
-        Self
+    pub fn new(cwd: impl Into<PathBuf>) -> Self {
+        Self { cwd: cwd.into() }
     }
 
     /// Resolve version using: explicit → current project → latest
-    pub async fn resolve_version(&self, crate_name: &str, version_spec: Option<&str>) -> Result<String> {
+    pub async fn resolve_version(
+        &self,
+        crate_name: &str,
+        version_spec: Option<&str>,
+    ) -> Result<String> {
         if let Some(spec) = version_spec {
             // Explicit version specified - find latest matching version
             self.resolve_version_constraint(crate_name, spec).await
@@ -32,6 +40,7 @@ impl VersionResolver {
     fn find_in_current_project(&self, crate_name: &str) -> Result<String> {
         let metadata = MetadataCommand::new()
             .features(CargoOpt::AllFeatures)
+            .current_dir(&self.cwd)
             .exec()?;
 
         // Look through all packages in the resolved dependency graph
@@ -45,7 +54,11 @@ impl VersionResolver {
     }
 
     /// Resolve version constraint to latest matching version
-    async fn resolve_version_constraint(&self, crate_name: &str, constraint: &str) -> Result<String> {
+    async fn resolve_version_constraint(
+        &self,
+        crate_name: &str,
+        constraint: &str,
+    ) -> Result<String> {
         let req = VersionReq::parse(constraint)?;
         let available_versions = self.get_available_versions(crate_name).await?;
 
@@ -71,9 +84,12 @@ impl VersionResolver {
         let client = crates_io_api::AsyncClient::new(
             "symposium-ferris (https://github.com/symposium-dev/symposium)",
             std::time::Duration::from_millis(1000),
-        ).map_err(|e| FerrisError::Other(e.to_string()))?;
+        )
+        .map_err(|e| FerrisError::Other(e.to_string()))?;
 
-        let crate_info = client.get_crate(crate_name).await
+        let crate_info = client
+            .get_crate(crate_name)
+            .await
             .map_err(|_| FerrisError::CrateNotFound(crate_name.to_string()))?;
 
         Ok(crate_info.crate_data.max_version)
@@ -84,10 +100,13 @@ impl VersionResolver {
         let client = crates_io_api::AsyncClient::new(
             "symposium-ferris (https://github.com/symposium-dev/symposium)",
             std::time::Duration::from_millis(1000),
-        ).map_err(|e| FerrisError::Other(e.to_string()))?;
+        )
+        .map_err(|e| FerrisError::Other(e.to_string()))?;
 
         // Get crate info which includes versions
-        let crate_info = client.get_crate(crate_name).await
+        let crate_info = client
+            .get_crate(crate_name)
+            .await
             .map_err(|_| FerrisError::CrateNotFound(crate_name.to_string()))?;
 
         let mut parsed_versions = Vec::new();
@@ -98,11 +117,5 @@ impl VersionResolver {
         }
 
         Ok(parsed_versions)
-    }
-}
-
-impl Default for VersionResolver {
-    fn default() -> Self {
-        Self::new()
     }
 }

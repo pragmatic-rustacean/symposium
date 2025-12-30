@@ -34,6 +34,6 @@ chrono = "0.4"
 tokio-util = { version = "0.7", features = ["compat"] }
 
 # Proxy components
-symposium-crate-sources-proxy = { path = "../symposium-crate-sources-proxy", version = "1.0.0-alpha.1" }
+symposium-ferris = { path = "../symposium-ferris", version = "1.0.0-alpha.1" }
 sacp-tee.workspace = true
 sparkle.workspace = true

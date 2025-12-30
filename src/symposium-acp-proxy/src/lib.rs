@@ -23,7 +23,7 @@ use std::path::PathBuf;
 
 /// Shared configuration for Symposium proxy chains.
 struct SymposiumConfig {
-    crate_sources_proxy: bool,
+    ferris: Option<symposium_ferris::Ferris>,
     sparkle: bool,
     trace_dir: Option<PathBuf>,
 }
@@ -32,7 +32,7 @@ impl SymposiumConfig {
     fn new() -> Self {
         SymposiumConfig {
             sparkle: true,
-            crate_sources_proxy: true,
+            ferris: Some(symposium_ferris::Ferris::default()),
             trace_dir: None,
         }
     }
@@ -58,8 +58,9 @@ impl Symposium {
         self
     }
 
-    pub fn crate_sources_proxy(mut self, enable: bool) -> Self {
-        self.config.crate_sources_proxy = enable;
+    /// Configure Ferris tools. Pass `None` to disable Ferris entirely.
+    pub fn ferris(mut self, config: Option<symposium_ferris::Ferris>) -> Self {
+        self.config.ferris = config;
         self
     }
 
@@ -82,7 +83,7 @@ impl Component<ProxyToConductor> for Symposium {
         tracing::debug!("Symposium::serve starting (proxy mode)");
         let Self { config } = self;
 
-        let crate_sources_proxy = config.crate_sources_proxy;
+        let ferris = config.ferris;
         let sparkle = config.sparkle;
         let trace_dir = config.trace_dir;
 
@@ -94,10 +95,10 @@ impl Component<ProxyToConductor> for Symposium {
 
                 let mut proxies: Vec<DynComponent<ProxyToConductor>> = vec![];
 
-                if crate_sources_proxy {
-                    proxies.push(DynComponent::new(
-                        symposium_crate_sources_proxy::CrateSourcesProxy {},
-                    ));
+                if let Some(ferris_config) = ferris {
+                    proxies.push(DynComponent::new(symposium_ferris::FerrisComponent::new(
+                        ferris_config,
+                    )));
                 }
 
                 if sparkle {
@@ -151,7 +152,7 @@ impl Component<AgentToClient> for SymposiumAgent {
         tracing::debug!("SymposiumAgent::serve starting (agent mode)");
         let Self { config, agent } = self;
 
-        let crate_sources_proxy = config.crate_sources_proxy;
+        let ferris = config.ferris;
         let sparkle = config.sparkle;
         let trace_dir = config.trace_dir;
 
@@ -163,10 +164,10 @@ impl Component<AgentToClient> for SymposiumAgent {
 
                 let mut proxies: Vec<DynComponent<ProxyToConductor>> = vec![];
 
-                if crate_sources_proxy {
-                    proxies.push(DynComponent::new(
-                        symposium_crate_sources_proxy::CrateSourcesProxy {},
-                    ));
+                if let Some(ferris_config) = ferris {
+                    proxies.push(DynComponent::new(symposium_ferris::FerrisComponent::new(
+                        ferris_config,
+                    )));
                 }
 
                 if sparkle {

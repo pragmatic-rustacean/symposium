@@ -24,3 +24,4 @@ clap = { workspace = true }
 
 # Symposium components
 symposium-acp-proxy = { path = "../symposium-acp-proxy", version = "1.0.0-alpha.1" }
+symposium-ferris = { path = "../symposium-ferris", version = "1.0.0-alpha.1" }

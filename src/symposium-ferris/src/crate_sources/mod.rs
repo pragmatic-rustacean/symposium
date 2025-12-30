@@ -6,6 +6,7 @@ use crate::Result;
 
 mod cache;
 mod extraction;
+pub(crate) mod mcp;
 mod version;
 
 pub use cache::CacheManager;
@@ -25,14 +26,16 @@ pub struct FetchResult {
 pub struct RustCrateFetch {
     crate_name: String,
     version_spec: Option<String>,
+    cwd: PathBuf,
 }
 
 impl RustCrateFetch {
     /// Create a new fetch request for the given crate name
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, cwd: impl Into<PathBuf>) -> Self {
         Self {
             crate_name: name.to_string(),
             version_spec: None,
+            cwd: cwd.into(),
         }
     }
 
@@ -45,7 +48,7 @@ impl RustCrateFetch {
     /// Fetch the crate sources, returning the path to extracted sources
     pub async fn fetch(self) -> Result<FetchResult> {
         // 1. Resolve version
-        let resolver = VersionResolver::new();
+        let resolver = VersionResolver::new(self.cwd);
         let version = resolver
             .resolve_version(&self.crate_name, self.version_spec.as_deref())
             .await?;
