@@ -29,6 +29,7 @@
     - [Testing](./design/vscode-extension/testing.md)
     - [Testing Implementation](./design/vscode-extension/testing-implementation.md)
     - [Packaging](./design/vscode-extension/packaging.md)
+    - [Agent Registry](./design/vscode-extension/agent-registry.md)
     - [Implementation Status](./design/vscode-extension/implementation-status.md)
 
 # References
