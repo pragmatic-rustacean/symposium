@@ -2,7 +2,7 @@
   "name": "symposium",
   "displayName": "Symposium",
   "description": "Collaborative AI built collaboratively",
-  "version": "10.0.0-alpha.2",
+  "version": "1.0.0",
   "publisher": "symposium-dev",
   "repository": {
     "type": "git",
