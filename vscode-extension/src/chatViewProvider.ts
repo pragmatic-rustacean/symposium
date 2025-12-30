@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as acp from "@agentclientprotocol/sdk";
 import { AcpAgentActor, ToolCallInfo, SlashCommandInfo } from "./acpAgentActor";
 import { AgentConfiguration } from "./agentConfiguration";
+import { getAgentById } from "./agentRegistry";
 import { WorkspaceFileIndex } from "./workspaceFileIndex";
 import { getConductorCommand } from "./binaryPath";
 import { logger } from "./extension";
@@ -86,14 +87,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (existing) {
       logger.debug("agent", "Reusing existing agent actor", {
         configKey: key,
-        agentName: config.agentName,
+        agentId: config.agentId,
       });
       return existing;
     }
 
     logger.important("agent", "Spawning new agent actor", {
       configKey: key,
-      agentName: config.agentName,
+      agentId: config.agentId,
     });
 
     // Create a new actor with callbacks
@@ -142,8 +143,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // Check if this agent has bypass permissions enabled
         const vsConfig = vscode.workspace.getConfiguration("symposium");
         const agents = vsConfig.get<Record<string, any>>("agents", {});
-        const agentConfig = agents[config.agentName];
-        const bypassPermissions = agentConfig?.bypassPermissions || false;
+        const agentSettingsEntry = agents[config.agentId];
+        const bypassPermissions =
+          agentSettingsEntry?.bypassPermissions || false;
+
+        // Get display name for logging
+        const agent = getAgentById(config.agentId);
+        const displayName = agent?.name ?? config.agentId;
 
         if (bypassPermissions) {
           // Auto-approve - find the "allow_once" option
@@ -155,7 +161,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               "approval",
               "Auto-approved (bypass permissions enabled)",
               {
-                agent: config.agentName,
+                agent: displayName,
                 tool: params.toolCall.title,
               },
             );
@@ -166,7 +172,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         // Need user approval - send request to webview and wait for response
-        return this.#requestUserApproval(params, config.agentName);
+        return this.#requestUserApproval(params, displayName);
       },
       onToolCall: (agentSessionId: string, toolCall: ToolCallInfo) => {
         const tabId = this.#agentSessionToTab.get(agentSessionId);
@@ -555,10 +561,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.#nextMessageIndex.set(message.tabId, 0);
 
             // Update tab title immediately (before spawning agent)
+            const agentForTitle = getAgentById(config.agentId);
             this.#sendToWebview({
               type: "set-tab-title",
               tabId: message.tabId,
-              title: config.agentName,
+              title: agentForTitle?.name ?? config.agentId,
             });
 
             // Get or create an actor for this configuration (may spawn process)
@@ -1237,10 +1244,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.#messageQueues.set(message.tabId, []);
           this.#nextMessageIndex.set(message.tabId, 0);
 
+          const agentForNewTab = getAgentById(config.agentId);
           this.#sendToWebview({
             type: "set-tab-title",
             tabId: message.tabId,
-            title: config.agentName,
+            title: agentForNewTab?.name ?? config.agentId,
           });
 
           const actor = await this.#getOrCreateActor(config);
@@ -1266,7 +1274,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           logger.important("agent", "Agent session created", {
             tabId: message.tabId,
             agentSessionId,
-            agentName: config.agentName,
+            agentId: config.agentId,
           });
         } catch (err) {
           logger.error("agent", "Failed to create agent session", {

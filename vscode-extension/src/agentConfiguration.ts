@@ -1,15 +1,20 @@
 import * as vscode from "vscode";
+import {
+  getAgentById,
+  getCurrentAgentId,
+  DEFAULT_AGENT_ID,
+} from "./agentRegistry";
 
 /**
  * AgentConfiguration - Identifies a unique agent setup
  *
- * Consists of the base agent name and workspace folder.
+ * Consists of the agent ID and workspace folder.
  * Tabs with the same configuration can share an ACP agent process.
  */
 
 export class AgentConfiguration {
   constructor(
-    public readonly agentName: string,
+    public readonly agentId: string,
     public readonly workspaceFolder: vscode.WorkspaceFolder,
     public readonly enableSparkle: boolean = true,
     public readonly enableCrateResearcher: boolean = true,
@@ -25,7 +30,7 @@ export class AgentConfiguration {
     ]
       .filter((c) => c)
       .join("+");
-    return `${this.agentName}:${this.workspaceFolder.uri.fsPath}:${components}`;
+    return `${this.agentId}:${this.workspaceFolder.uri.fsPath}:${components}`;
   }
 
   /**
@@ -39,15 +44,18 @@ export class AgentConfiguration {
    * Get a human-readable description
    */
   describe(): string {
+    const agent = getAgentById(this.agentId);
+    const displayName = agent?.name ?? this.agentId;
+
     const components = [
       this.enableSparkle ? "Sparkle" : null,
       this.enableCrateResearcher ? "Rust Crate Researcher" : null,
     ].filter((c) => c !== null);
 
     if (components.length === 0) {
-      return this.agentName;
+      return displayName;
     }
-    return `${this.agentName} + ${components.join(" + ")}`;
+    return `${displayName} + ${components.join(" + ")}`;
   }
 
   /**
@@ -59,8 +67,8 @@ export class AgentConfiguration {
   ): Promise<AgentConfiguration> {
     const config = vscode.workspace.getConfiguration("symposium");
 
-    // Get current agent
-    const currentAgentName = config.get<string>("currentAgent", "Claude Code");
+    // Get current agent ID
+    const currentAgentId = getCurrentAgentId();
 
     // Get component settings
     const enableSparkle = config.get<boolean>("enableSparkle", true);
@@ -90,7 +98,7 @@ export class AgentConfiguration {
     }
 
     return new AgentConfiguration(
-      currentAgentName,
+      currentAgentId,
       folder,
       enableSparkle,
       enableCrateResearcher,

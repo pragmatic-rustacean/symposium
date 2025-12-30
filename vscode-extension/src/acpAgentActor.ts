@@ -10,6 +10,7 @@ import { Writable, Readable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import { AgentConfiguration } from "./agentConfiguration";
+import { getAgentById, resolveDistribution } from "./agentRegistry";
 import { logger } from "./extension";
 
 /**
@@ -216,23 +217,18 @@ export class AcpAgentActor {
     const vsConfig = vscode.workspace.getConfiguration("symposium");
 
     // Get the agent definition
-    const agents = vsConfig.get<
-      Record<
-        string,
-        { command: string; args?: string[]; env?: Record<string, string> }
-      >
-    >("agents", {});
-    const agent = agents[config.agentName];
+    const agent = getAgentById(config.agentId);
 
     if (!agent) {
       throw new Error(
-        `Agent "${config.agentName}" not found in configured agents`,
+        `Agent "${config.agentId}" not found in configured agents`,
       );
     }
 
-    // Build the agent command with its arguments
-    const agentCmd = agent.command;
-    const agentArgs = agent.args || [];
+    // Resolve distribution to command and args
+    const resolved = await resolveDistribution(agent);
+    const agentCmd = resolved.command;
+    const agentArgs = resolved.args;
 
     // Build conductor arguments: [--trace-dir <dir>] -- <agent-command> [agent-args...]
     const conductorArgs: string[] = [];
@@ -270,8 +266,10 @@ export class AcpAgentActor {
       args: conductorArgs,
     });
 
-    // Merge environment variables
-    const env = agent.env ? { ...process.env, ...agent.env } : process.env;
+    // Merge environment variables (from resolved distribution if any)
+    const env = resolved.env
+      ? { ...process.env, ...resolved.env }
+      : process.env;
 
     // Spawn the agent process
     this.agentProcess = spawn(conductorCommand, conductorArgs, {

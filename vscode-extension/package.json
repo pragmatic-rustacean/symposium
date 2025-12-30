@@ -40,25 +40,97 @@
             ".*": {
               "type": "object",
               "properties": {
-                "command": {
+                "name": {
                   "type": "string",
-                  "description": "Command to launch the agent"
+                  "description": "Display name for the agent"
                 },
-                "args": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "default": [],
-                  "description": "Arguments to pass to the agent command"
+                "version": {
+                  "type": "string",
+                  "description": "Version of the agent"
                 },
-                "env": {
+                "description": {
+                  "type": "string",
+                  "description": "Description of the agent"
+                },
+                "distribution": {
                   "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "default": {},
-                  "description": "Environment variables for the agent process"
+                  "description": "Distribution methods for spawning the agent",
+                  "properties": {
+                    "npx": {
+                      "type": "object",
+                      "properties": {
+                        "package": {
+                          "type": "string",
+                          "description": "NPM package name"
+                        },
+                        "args": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Additional arguments"
+                        }
+                      },
+                      "required": [
+                        "package"
+                      ]
+                    },
+                    "pipx": {
+                      "type": "object",
+                      "properties": {
+                        "package": {
+                          "type": "string",
+                          "description": "PyPI package name"
+                        },
+                        "args": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Additional arguments"
+                        }
+                      },
+                      "required": [
+                        "package"
+                      ]
+                    },
+                    "binary": {
+                      "type": "object",
+                      "description": "Binary distributions keyed by platform (e.g., darwin-aarch64, linux-x86_64)",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "url": {
+                            "type": "string",
+                            "description": "Download URL for the binary"
+                          },
+                          "executable": {
+                            "type": "string",
+                            "description": "Name of the executable within the archive"
+                          },
+                          "args": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Additional arguments"
+                          }
+                        },
+                        "required": [
+                          "url",
+                          "executable"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "_source": {
+                  "type": "string",
+                  "enum": [
+                    "registry",
+                    "custom"
+                  ],
+                  "description": "Source of the agent configuration (registry = auto-updated, custom = user-defined)"
                 },
                 "bypassPermissions": {
                   "type": "boolean",
@@ -67,31 +139,17 @@
                 }
               },
               "required": [
-                "command"
+                "distribution"
               ]
             }
           },
-          "default": {
-            "ElizACP": {
-              "command": "elizacp",
-              "args": [],
-              "env": {}
-            },
-            "Claude Code": {
-              "command": "npx",
-              "args": [
-                "-y",
-                "@zed-industries/claude-code-acp@latest"
-              ],
-              "env": {}
-            }
-          },
-          "description": "Configured ACP agents (keyed by agent name)"
+          "default": {},
+          "description": "Additional ACP agents (keyed by agent ID). Built-in agents (zed-claude-code, zed-codex, google-gemini) are always available."
         },
-        "symposium.currentAgent": {
+        "symposium.currentAgentId": {
           "type": "string",
-          "default": "Claude Code",
-          "description": "Name of the currently selected agent"
+          "default": "zed-claude-code",
+          "description": "ID of the currently selected agent"
         },
         "symposium.traceDir": {
           "type": "string",
