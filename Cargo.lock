@@ -3129,7 +3129,7 @@ dependencies = [
 
 [[package]]
 name = "symposium-benchmark"
-version = "1.0.0-alpha.1"
+version = "1.0.0-alpha.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -3150,7 +3150,7 @@ dependencies = [
 
 [[package]]
 name = "symposium-cli-agent-util"
-version = "0.1.0"
+version = "1.0.0-alpha.2"
 dependencies = [
  "anyhow",
  "which 4.4.2",
@@ -3158,7 +3158,7 @@ dependencies = [
 
 [[package]]
 name = "symposium-ferris"
-version = "1.0.0-alpha.1"
+version = "1.0.0-alpha.2"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -3182,7 +3182,7 @@ dependencies = [
 
 [[package]]
 name = "symposium-math"
-version = "0.1.0"
+version = "1.0.0-alpha.2"
 dependencies = [
  "anyhow",
  "clap",
