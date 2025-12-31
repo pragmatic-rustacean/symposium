@@ -3099,9 +3099,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-conductor"
-version = "10.0.0"
+version = "10.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ee5ed27db7ad9ff65c75b71cf9052f1798eb64d00b34eac0eb695f977e4173b"
+checksum = "f91f2131d781dcd54d0dc380a73d90151cb6e95a7a66b80f3c90af8bcb161ed9"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3143,9 +3143,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-rmcp"
-version = "10.0.0"
+version = "10.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0eac402a5c3424090e9008fd06735573186216ed62436d8aad78dd079b76a39c"
+checksum = "cebe54bd70d4e89d6c8626bf9748895a6ca1ded19e4567bd849aa3684ee58212"
 dependencies = [
  "futures",
  "rmcp",
@@ -3156,9 +3156,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-tee"
-version = "10.0.0"
+version = "10.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a8dacf498181be9e92d1823c28033602f5a2dedc484615d916f60961d4cdd6b"
+checksum = "0e1fccc4f02d8a82eccc4ff8f60e1229e8da171deebbd4f8081e3005eb5f18f3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5119,9 +5119,9 @@ dependencies = [
 
 [[package]]
 name = "yopo"
-version = "10.0.0"
+version = "10.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87ff65663a8fee8aac90f4a133f5def0c2f0aba5746c6c7c6a119651777421ea"
+checksum = "54f2f357691337f76d3d9a1931c9f49c385684d3cd637891d742ecf71f12423e"
 dependencies = [
  "clap",
  "sacp",
