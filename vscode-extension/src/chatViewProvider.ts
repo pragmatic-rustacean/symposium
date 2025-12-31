@@ -868,11 +868,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // Generate unique approval ID
     const approvalId = uuidv4();
 
-    // Find the tab for this session (we don't have sessionId in params, so we'll send to all tabs)
-    // For now, we'll use the first tab - TODO: improve this to target the right tab
-    const tabIds = Array.from(this.#tabToAgentSession.keys());
-    if (tabIds.length === 0) {
-      logger.error("approval", "No tabs available for approval request");
+    // Find the tab for this agent by looking up which tab has a config with matching agentId
+    let tabId: string | undefined;
+    for (const [tid, config] of this.#tabToConfig.entries()) {
+      if (config.agentId === agentId) {
+        tabId = tid;
+        break;
+      }
+    }
+
+    if (!tabId) {
+      logger.error("approval", "No tab found for agent", { agentId });
       // Fallback: deny
       const rejectOption = params.options.find(
         (opt) => opt.kind === "reject_once",
@@ -884,8 +890,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       return { outcome: { outcome: "cancelled" } };
     }
-
-    const tabId = tabIds[0]; // Use first tab for now
 
     logger.debug("approval", "Requesting user approval", {
       approvalId,
