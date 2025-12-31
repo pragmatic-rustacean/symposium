@@ -131,11 +131,6 @@
                     "custom"
                   ],
                   "description": "Source of the agent configuration (registry = auto-updated, custom = user-defined)"
-                },
-                "bypassPermissions": {
-                  "type": "boolean",
-                  "default": false,
-                  "description": "Automatically approve all tool execution requests for this agent"
                 }
               },
               "required": [
@@ -173,6 +168,14 @@
           "type": "boolean",
           "default": false,
           "description": "When enabled, Enter adds a newline and Shift+Enter (or Cmd+Enter on Mac) sends the prompt. When disabled (default), Enter sends and Shift+Enter adds a newline."
+        },
+        "symposium.bypassPermissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of agent IDs that automatically approve all tool execution requests."
         }
       }
     },

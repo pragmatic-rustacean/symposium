@@ -95,23 +95,25 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
 
   async #toggleBypassPermissions(agentId: string) {
     const config = vscode.workspace.getConfiguration("symposium");
-    const agents = config.get<Record<string, any>>("agents", {});
+    const bypassList = config.get<string[]>("bypassPermissions", []);
 
     // Get the agent to find its display name
     const effectiveAgents = getEffectiveAgents();
     const agent = effectiveAgents.find((a) => a.id === agentId);
     const displayName = agent?.name ?? agentId;
 
-    // Initialize agent entry in settings if it doesn't exist
-    if (!agents[agentId]) {
-      agents[agentId] = {};
-    }
+    const isCurrentlyBypassed = bypassList.includes(agentId);
+    const newList = isCurrentlyBypassed
+      ? bypassList.filter((id) => id !== agentId)
+      : [...bypassList, agentId];
 
-    const currentValue = agents[agentId].bypassPermissions || false;
-    agents[agentId].bypassPermissions = !currentValue;
-    await config.update("agents", agents, vscode.ConfigurationTarget.Global);
+    await config.update(
+      "bypassPermissions",
+      newList,
+      vscode.ConfigurationTarget.Global,
+    );
     vscode.window.showInformationMessage(
-      `${displayName}: Bypass permissions ${!currentValue ? "enabled" : "disabled"}`,
+      `${displayName}: Bypass permissions ${!isCurrentlyBypassed ? "enabled" : "disabled"}`,
     );
     this.#sendConfiguration();
   }
@@ -167,13 +169,13 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
     }
 
     const config = vscode.workspace.getConfiguration("symposium");
-    const settingsAgents = config.get<Record<string, any>>("agents", {});
+    const bypassList = config.get<string[]>("bypassPermissions", []);
 
     // Get effective agents (built-ins + settings) and merge bypass settings
     const effectiveAgents = getEffectiveAgents();
     const agents = effectiveAgents.map((agent) => ({
       ...agent,
-      bypassPermissions: settingsAgents[agent.id]?.bypassPermissions ?? false,
+      bypassPermissions: bypassList.includes(agent.id),
     }));
 
     const currentAgentId = getCurrentAgentId();

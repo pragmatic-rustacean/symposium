@@ -143,10 +143,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       ): Promise<acp.RequestPermissionResponse> => {
         // Check if this agent has bypass permissions enabled
         const vsConfig = vscode.workspace.getConfiguration("symposium");
-        const agents = vsConfig.get<Record<string, any>>("agents", {});
-        const agentSettingsEntry = agents[config.agentId];
-        const bypassPermissions =
-          agentSettingsEntry?.bypassPermissions || false;
+        const bypassList = vsConfig.get<string[]>("bypassPermissions", []);
+        const bypassPermissions = bypassList.includes(config.agentId);
 
         // Get display name for logging
         const agent = getAgentById(config.agentId);
@@ -814,22 +812,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // Handle "bypass all" option - update settings for this agent
             if (message.bypassAll) {
               const vsConfig = vscode.workspace.getConfiguration("symposium");
-              const agents = vsConfig.get<Record<string, any>>("agents", {});
-
-              // Update the agent's bypassPermissions setting (create entry if needed)
-              if (!agents[pending.agentId]) {
-                agents[pending.agentId] = {};
-              }
-              agents[pending.agentId].bypassPermissions = true;
-              await vsConfig.update(
-                "agents",
-                agents,
-                vscode.ConfigurationTarget.Global,
+              const bypassList = vsConfig.get<string[]>(
+                "bypassPermissions",
+                [],
               );
-              logger.debug("approval", "Bypass permissions enabled by user", {
-                agentId: pending.agentId,
-                agent: pending.agentName,
-              });
+
+              // Add agent to bypass list if not already present
+              if (!bypassList.includes(pending.agentId)) {
+                await vsConfig.update(
+                  "bypassPermissions",
+                  [...bypassList, pending.agentId],
+                  vscode.ConfigurationTarget.Global,
+                );
+                logger.debug("approval", "Bypass permissions enabled by user", {
+                  agentId: pending.agentId,
+                  agent: pending.agentName,
+                });
+              }
             }
 
             // Resolve the promise with the response
@@ -1369,22 +1368,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           // Handle "bypass all" option - update settings for this agent
           if (message.bypassAll) {
             const vsConfig = vscode.workspace.getConfiguration("symposium");
-            const agents = vsConfig.get<Record<string, any>>("agents", {});
+            const bypassList = vsConfig.get<string[]>("bypassPermissions", []);
 
-            // Update the agent's bypassPermissions setting (create entry if needed)
-            if (!agents[pending.agentId]) {
-              agents[pending.agentId] = {};
+            // Add agent to bypass list if not already present
+            if (!bypassList.includes(pending.agentId)) {
+              await vsConfig.update(
+                "bypassPermissions",
+                [...bypassList, pending.agentId],
+                vscode.ConfigurationTarget.Global,
+              );
+              logger.debug("approval", "Bypass permissions enabled by user", {
+                agentId: pending.agentId,
+                agent: pending.agentName,
+              });
             }
-            agents[pending.agentId].bypassPermissions = true;
-            await vsConfig.update(
-              "agents",
-              agents,
-              vscode.ConfigurationTarget.Global,
-            );
-            logger.debug("approval", "Bypass permissions enabled by user", {
-              agentId: pending.agentId,
-              agent: pending.agentName,
-            });
           }
 
           // Resolve the promise with the response
