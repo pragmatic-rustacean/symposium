@@ -10,8 +10,6 @@ use sacp::{
     JrNotification, JrPeer, JrRequest, JrResponsePayload, MessageCx,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 // ============================================================================
 // Peers
@@ -205,13 +203,13 @@ pub struct ProvideTokenCountResponse {
 
 /// Handler for LM backend messages
 pub struct LmBackendHandler {
-    eliza: Arc<Mutex<Eliza>>,
+    eliza: Eliza,
 }
 
 impl LmBackendHandler {
     pub fn new() -> Self {
         Self {
-            eliza: Arc::new(Mutex::new(Eliza::new())),
+            eliza: Eliza::new(),
         }
     }
 }
@@ -228,9 +226,8 @@ impl JrMessageHandler for LmBackendHandler {
         message: MessageCx,
         cx: JrConnectionCx<Self::Link>,
     ) -> Result<Handled<MessageCx>, sacp::Error> {
-        let eliza = self.eliza.clone();
-
-        MatchMessage::new(message)
+        // First, try handlers that don't need &mut self
+        let result = MatchMessage::new(message)
             .if_request(async |_req: ProvideInfoRequest, request_cx| {
                 let response = ProvideInfoResponse {
                     models: vec![ModelInfo {
@@ -248,6 +245,21 @@ impl JrMessageHandler for LmBackendHandler {
                 request_cx.respond(response)
             })
             .await
+            .if_request(async |req: ProvideTokenCountRequest, request_cx| {
+                // Simple heuristic: 1 token ≈ 4 characters
+                let count = (req.text.len() / 4).max(1) as u32;
+                request_cx.respond(ProvideTokenCountResponse { count })
+            })
+            .await
+            .done()?;
+
+        // Handle ProvideResponseRequest separately since it needs &mut self.eliza
+        let message = match result {
+            Handled::Yes => return Ok(Handled::Yes),
+            Handled::No { message, .. } => message,
+        };
+
+        MatchMessage::new(message)
             .if_request(async |req: ProvideResponseRequest, request_cx| {
                 // Get the request ID from the request context for notifications
                 let request_id = request_cx.id().clone();
@@ -264,13 +276,10 @@ impl JrMessageHandler for LmBackendHandler {
                 tracing::info!("user message: {}", user_message);
 
                 // Generate response from Eliza
-                let response_text = {
-                    let mut eliza = eliza.lock().await;
-                    if user_message.is_empty() {
-                        eliza.hello().to_string()
-                    } else {
-                        eliza.respond(&user_message)
-                    }
+                let response_text = if user_message.is_empty() {
+                    self.eliza.hello().to_string()
+                } else {
+                    self.eliza.respond(&user_message)
                 };
 
                 tracing::info!("eliza response: {}", response_text);
@@ -289,12 +298,6 @@ impl JrMessageHandler for LmBackendHandler {
 
                 // Send the response
                 request_cx.respond(ProvideResponseResponse {})
-            })
-            .await
-            .if_request(async |req: ProvideTokenCountRequest, request_cx| {
-                // Simple heuristic: 1 token ≈ 4 characters
-                let count = (req.text.len() / 4).max(1) as u32;
-                request_cx.respond(ProvideTokenCountResponse { count })
             })
             .await
             .otherwise(async |message| match message {
