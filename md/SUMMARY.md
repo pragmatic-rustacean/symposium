@@ -34,6 +34,7 @@
     - [Packaging](./design/vscode-extension/packaging.md)
     - [Agent Registry](./design/vscode-extension/agent-registry.md)
     - [Language Model Provider](./design/vscode-extension/lm-provider.md)
+    - [Language Model Tool Bridging](./design/vscode-extension/lm-tool-bridging.md)
     - [Implementation Status](./design/vscode-extension/implementation-status.md)
 
 # References
@@ -46,6 +47,8 @@
 
 - [MynahUI GUI Capabilities](./references/mynah-ui-guide.md)
 - [VSCode Webview Lifecycle](./references/vscode-webview-lifecycle.md)
+- [VSCode Language Model Tool API](./references/vscode-lm-tool-api.md)
+- [VSCode Language Model Tool Rejection](./references/vscode-lm-tool-rejection.md)
 - [Language Server Protocol Overview](./research/lsp-overview/README.md)
     - [Base Protocol](./research/lsp-overview/base-protocol.md)
     - [Language Features](./research/lsp-overview/language-features.md)

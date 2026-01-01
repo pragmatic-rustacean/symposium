@@ -190,10 +190,17 @@ After all parts are streamed, the request completes:
 - [x] TypeScript: Agent configuration from settings
 - [ ] End-to-end test with real ACP agent
 
+## Tool Bridging
+
+See [Language Model Tool Bridging](./lm-tool-bridging.md) for the design of how tools flow between VS Code and ACP agents. This covers:
+
+- VS Code-provided tools (shuttled to agent via synthetic MCP server)
+- Agent-internal tools (permission requests surfaced via `symposium-agent-action`)
+- Handle state management across requests
+- Cancellation and history matching
+
 ## Future Work
 
 - Session caching with message history diffing
-- MCP-over-ACP tool bridging
 - Token counting heuristics
 - Model metadata from agent capabilities
-- Cancellation support
