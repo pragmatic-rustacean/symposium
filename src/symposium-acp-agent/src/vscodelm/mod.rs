@@ -3,13 +3,15 @@
 //! This module implements the Rust backend for the VS Code `LanguageModelChatProvider` API.
 //! It uses sacp's JSON-RPC infrastructure for communication with the TypeScript extension.
 
+mod session_actor;
+
 use anyhow::Result;
-use elizacp::eliza::Eliza;
 use sacp::{
     link::RemoteStyle, util::MatchMessage, Component, Handled, JrConnectionCx, JrLink,
     JrMessageHandler, JrNotification, JrPeer, JrRequest, JrResponsePayload, MessageCx,
 };
 use serde::{Deserialize, Serialize};
+use session_actor::SessionActor;
 use std::path::PathBuf;
 
 // ============================================================================
@@ -75,14 +77,14 @@ impl sacp::HasPeer<LmBackendPeer> for VsCodeToLmBackend {
 // ============================================================================
 
 /// Message content part
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ContentPart {
     Text { value: String },
 }
 
 /// A chat message
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
     pub content: Vec<ContentPart>,
@@ -204,13 +206,27 @@ pub struct ProvideTokenCountResponse {
 
 /// Handler for LM backend messages
 pub struct LmBackendHandler {
-    eliza: Eliza,
+    /// Active sessions, searched linearly for prefix matches
+    sessions: Vec<SessionActor>,
+    /// Whether to use deterministic Eliza responses (for testing)
+    #[cfg(test)]
+    deterministic: bool,
 }
 
 impl LmBackendHandler {
     pub fn new() -> Self {
         Self {
-            eliza: Eliza::new(),
+            sessions: Vec::new(),
+            #[cfg(test)]
+            deterministic: false,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_deterministic() -> Self {
+        Self {
+            sessions: Vec::new(),
+            deterministic: true,
         }
     }
 }
@@ -256,30 +272,44 @@ impl JrMessageHandler for LmBackendHandler {
                 // Get the request ID from the request context for notifications
                 let request_id = request_cx.id().clone();
 
-                // Extract the last user message
-                let user_message = req
-                    .messages
+                // Find session with longest matching prefix
+                let (session_idx, prefix_len) = self
+                    .sessions
                     .iter()
-                    .rev()
-                    .find(|m| m.role == "user")
-                    .map(|m| m.text())
-                    .unwrap_or_default();
+                    .enumerate()
+                    .filter_map(|(i, s)| s.prefix_match_len(&req.messages).map(|len| (i, len)))
+                    .max_by_key(|(_, len)| *len)
+                    .unwrap_or((usize::MAX, 0));
 
-                // Generate response from Eliza
-                let response_text = if user_message.is_empty() {
-                    self.eliza.hello().to_string()
+                // Get or create session
+                let session = if session_idx < self.sessions.len() {
+                    tracing::debug!(session_idx, prefix_len, "continuing existing session");
+                    &mut self.sessions[session_idx]
                 } else {
-                    self.eliza.respond(&user_message)
+                    tracing::debug!("creating new session");
+                    #[cfg(test)]
+                    let deterministic = self.deterministic;
+                    #[cfg(not(test))]
+                    let deterministic = false;
+                    let session = SessionActor::spawn(&cx, deterministic)?;
+                    self.sessions.push(session);
+                    self.sessions.last_mut().unwrap()
                 };
 
-                tracing::debug!(?response_text, "eliza response");
+                // Compute new messages (everything after the matched prefix)
+                let new_messages = req.messages[prefix_len..].to_vec();
+                tracing::debug!(
+                    new_message_count = new_messages.len(),
+                    "sending new messages"
+                );
 
-                // Stream the response in chunks
-                for chunk in response_text.chars().collect::<Vec<_>>().chunks(5) {
-                    let chunk_str: String = chunk.iter().collect();
+                // Send to actor and stream response
+                let mut reply_rx = session.send_prompt(new_messages);
+
+                while let Some(part) = reply_rx.recv().await {
                     cx.send_notification(ResponsePartNotification {
                         request_id: request_id.clone(),
-                        part: ResponsePart::Text { value: chunk_str },
+                        part,
                     })?;
                 }
 
@@ -326,9 +356,7 @@ impl LmBackend {
     #[cfg(test)]
     pub fn new_deterministic() -> Self {
         Self {
-            handler: LmBackendHandler {
-                eliza: Eliza::new_deterministic(),
-            },
+            handler: LmBackendHandler::new_deterministic(),
         }
     }
 }
@@ -497,5 +525,93 @@ mod tests {
         expect![[r#"Do you often feel happy?"#]].assert_eq(&full_response);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_session_continuation() -> Result<(), sacp::Error> {
+        // Test that a second request extending the first reuses the session
+        // and only processes new messages
+        let responses: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let responses_for_notif = responses.clone();
+        let connection = VsCodeToLmBackend::builder()
+            .on_receive_notification(
+                async move |notif: ResponsePartNotification, _cx| {
+                    let ResponsePart::Text { value } = notif.part;
+                    responses_for_notif.lock().unwrap().push(value);
+                    Ok(())
+                },
+                sacp::on_receive_notification!(),
+            )
+            .on_receive_notification(
+                async |_notif: ResponseCompleteNotification, _cx| Ok(()),
+                sacp::on_receive_notification!(),
+            )
+            .connect_to(LmBackend::new_deterministic())?;
+
+        connection
+            .run_until(async |cx| {
+                // First request: single user message
+                cx.send_request(ProvideResponseRequest {
+                    model_id: "symposium-eliza".to_string(),
+                    messages: vec![Message {
+                        role: "user".to_string(),
+                        content: vec![ContentPart::Text {
+                            value: "I feel happy".to_string(),
+                        }],
+                    }],
+                })
+                .block_task()
+                .await?;
+
+                let first_response: String = responses.lock().unwrap().drain(..).collect();
+                expect![[r#"Do you often feel happy?"#]].assert_eq(&first_response);
+
+                // Second request: extends the first with assistant response + new user message
+                // This simulates what VS Code does - it sends the full history each time
+                cx.send_request(ProvideResponseRequest {
+                    model_id: "symposium-eliza".to_string(),
+                    messages: vec![
+                        Message {
+                            role: "user".to_string(),
+                            content: vec![ContentPart::Text {
+                                value: "I feel happy".to_string(),
+                            }],
+                        },
+                        Message {
+                            role: "assistant".to_string(),
+                            content: vec![ContentPart::Text {
+                                value: "Do you often feel happy?".to_string(),
+                            }],
+                        },
+                        Message {
+                            role: "user".to_string(),
+                            content: vec![ContentPart::Text {
+                                value: "Yes, I am very happy".to_string(),
+                            }],
+                        },
+                    ],
+                })
+                .block_task()
+                .await?;
+
+                let second_response: String = responses.lock().unwrap().drain(..).collect();
+                // Eliza responds - the key thing is we got a response, proving
+                // the session continued and processed only the new message
+                assert!(
+                    !second_response.is_empty(),
+                    "Expected a response from continued session"
+                );
+                // Should NOT contain the first response again (proving we didn't reprocess)
+                assert!(
+                    !second_response.contains("Do you often feel happy"),
+                    "Should not have reprocessed first message, got: {}",
+                    second_response
+                );
+
+                Ok(())
+            })
+            .await
     }
 }
