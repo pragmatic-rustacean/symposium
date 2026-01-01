@@ -3617,6 +3617,7 @@ dependencies = [
  "clap",
  "elizacp",
  "expect-test",
+ "futures-concurrency",
  "sacp",
  "sacp-conductor",
  "sacp-tokio",

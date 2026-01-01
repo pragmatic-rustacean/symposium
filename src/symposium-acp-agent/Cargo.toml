@@ -32,6 +32,7 @@ symposium-ferris = { path = "../symposium-ferris", version = "1.0.1" }
 elizacp.workspace = true
 chrono = "0.4.42"
 uuid = { workspace = true, features = ["v4"] }
+futures-concurrency = "7"
 
 [dev-dependencies]
 expect-test.workspace = true

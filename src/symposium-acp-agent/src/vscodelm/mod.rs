@@ -185,6 +185,17 @@ pub struct ResponseCompleteNotification {
 }
 
 // ----------------------------------------------------------------------------
+// lm/cancel (notification: vscode -> backend)
+// ----------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, JrNotification)]
+#[notification(method = "lm/cancel")]
+#[serde(rename_all = "camelCase")]
+pub struct CancelNotification {
+    pub request_id: serde_json::Value,
+}
+
+// ----------------------------------------------------------------------------
 // lm/provideTokenCount
 // ----------------------------------------------------------------------------
 
@@ -205,10 +216,55 @@ pub struct ProvideTokenCountResponse {
 // Message Handler
 // ============================================================================
 
+use tokio::sync::oneshot;
+
+/// A session with its current state.
+struct SessionData {
+    actor: SessionActor,
+    state: SessionState,
+}
+
+/// State of a session from the handler's perspective.
+enum SessionState {
+    /// Session is idle, waiting for a prompt.
+    Idle,
+    /// Session is streaming a response.
+    Streaming {
+        /// The JSON-RPC request ID of the in-flight request.
+        request_id: serde_json::Value,
+        /// Send on this channel to cancel the streaming response.
+        cancel_tx: oneshot::Sender<()>,
+    },
+}
+
+impl SessionState {
+    /// Cancel any in-progress streaming and transition to Idle.
+    /// No-op if already Idle.
+    fn cancel(&mut self) {
+        let old_state = std::mem::replace(self, SessionState::Idle);
+        if let SessionState::Streaming { cancel_tx, .. } = old_state {
+            // Ignore send error - receiver may already be gone
+            let _ = cancel_tx.send(());
+        }
+    }
+}
+
+impl SessionData {
+    /// Check if incoming messages extend this session's history.
+    fn prefix_match_len(&self, messages: &[Message]) -> Option<usize> {
+        self.actor.prefix_match_len(messages)
+    }
+
+    /// Returns true if this session is streaming with the given request ID.
+    fn is_streaming_request(&self, request_id: &serde_json::Value) -> bool {
+        matches!(&self.state, SessionState::Streaming { request_id: rid, .. } if rid == request_id)
+    }
+}
+
 /// Handler for LM backend messages
 pub struct LmBackendHandler {
     /// Active sessions, searched linearly for prefix matches
-    sessions: Vec<SessionActor>,
+    sessions: Vec<SessionData>,
 }
 
 impl LmBackendHandler {
@@ -217,6 +273,71 @@ impl LmBackendHandler {
             sessions: Vec::new(),
         }
     }
+}
+
+/// JSON-RPC error code for request cancellation.
+/// Using -32800 which is in the server error range (-32000 to -32099 reserved for implementation).
+const ERROR_CODE_CANCELLED: i32 = -32800;
+
+/// Stream response parts from the session actor, with cancellation support.
+///
+/// This function races between:
+/// - Receiving response parts from the actor
+/// - Receiving a cancellation signal
+///
+/// On normal completion, sends `lm/responseComplete` and responds to the request.
+/// On cancellation, responds with a cancellation error.
+async fn stream_response(
+    cx: JrConnectionCx<LmBackendToVsCode>,
+    request_id: serde_json::Value,
+    request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
+    mut reply_rx: tokio::sync::mpsc::UnboundedReceiver<ResponsePart>,
+    mut cancel_rx: oneshot::Receiver<()>,
+) -> Result<(), sacp::Error> {
+    use futures_concurrency::future::Race;
+
+    loop {
+        // Race between receiving a part and receiving cancellation
+        enum Outcome {
+            Part(Option<ResponsePart>),
+            Cancelled,
+        }
+
+        let outcome = (async { Outcome::Part(reply_rx.recv().await) }, async {
+            let _ = (&mut cancel_rx).await;
+            Outcome::Cancelled
+        })
+            .race()
+            .await;
+
+        match outcome {
+            Outcome::Part(Some(part)) => {
+                cx.send_notification(ResponsePartNotification {
+                    request_id: request_id.clone(),
+                    part,
+                })?;
+            }
+            Outcome::Part(None) => {
+                // Stream complete - send completion notification and respond
+                cx.send_notification(ResponseCompleteNotification {
+                    request_id: request_id.clone(),
+                })?;
+                request_cx.respond(ProvideResponseResponse {})?;
+                break;
+            }
+            Outcome::Cancelled => {
+                // Cancelled - respond with error
+                tracing::debug!(?request_id, "streaming cancelled");
+                request_cx.respond_with_error(sacp::Error::new(
+                    ERROR_CODE_CANCELLED,
+                    "Request cancelled",
+                ))?;
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 impl JrMessageHandler for LmBackendHandler {
@@ -270,43 +391,86 @@ impl JrMessageHandler for LmBackendHandler {
                     .unwrap_or((usize::MAX, 0));
 
                 // Get or create session
-                let session = if session_idx < self.sessions.len() {
-                    let session = &mut self.sessions[session_idx];
+                let session_data = if session_idx < self.sessions.len() {
+                    let session_data = &mut self.sessions[session_idx];
                     tracing::debug!(
-                        session_id = %session.session_id(),
+                        session_id = %session_data.actor.session_id(),
                         prefix_len,
                         "continuing existing session"
                     );
-                    session
+                    session_data
                 } else {
-                    let session = SessionActor::spawn(&cx, req.agent.clone())?;
-                    self.sessions.push(session);
+                    let actor = SessionActor::spawn(&cx, req.agent.clone())?;
+                    self.sessions.push(SessionData {
+                        actor,
+                        state: SessionState::Idle,
+                    });
                     self.sessions.last_mut().unwrap()
                 };
+
+                // If session is currently streaming, cancel it first
+                if !matches!(session_data.state, SessionState::Idle) {
+                    tracing::debug!(
+                        session_id = %session_data.actor.session_id(),
+                        "cancelling previous streaming before starting new request"
+                    );
+                    session_data.state.cancel();
+                }
 
                 // Compute new messages (everything after the matched prefix)
                 let new_messages = req.messages[prefix_len..].to_vec();
                 tracing::debug!(
-                    session_id = %session.session_id(),
+                    session_id = %session_data.actor.session_id(),
                     new_message_count = new_messages.len(),
                     "sending new messages to session"
                 );
 
-                // Send to actor and stream response
-                let mut reply_rx = session.send_prompt(new_messages);
+                // Create cancellation channel
+                let (cancel_tx, cancel_rx) = oneshot::channel();
 
-                while let Some(part) = reply_rx.recv().await {
-                    cx.send_notification(ResponsePartNotification {
-                        request_id: request_id.clone(),
-                        part,
-                    })?;
+                // Send prompt to actor
+                let reply_rx = session_data.actor.send_prompt(new_messages);
+
+                // Transition to Streaming state
+                session_data.state = SessionState::Streaming {
+                    request_id: request_id.clone(),
+                    cancel_tx,
+                };
+
+                // Spawn task to stream response (non-blocking)
+                cx.spawn(stream_response(
+                    cx.clone(),
+                    request_id,
+                    request_cx,
+                    reply_rx,
+                    cancel_rx,
+                ))?;
+
+                Ok(())
+            })
+            .await
+            .if_notification(async |notification: CancelNotification| {
+                tracing::debug!(?notification, "CancelNotification");
+
+                // Find the session streaming this request
+                if let Some(session_data) = self
+                    .sessions
+                    .iter_mut()
+                    .find(|s| s.is_streaming_request(&notification.request_id))
+                {
+                    session_data.state.cancel();
+                    tracing::debug!(
+                        session_id = %session_data.actor.session_id(),
+                        "cancelled streaming response"
+                    );
+                } else {
+                    tracing::warn!(
+                        request_id = ?notification.request_id,
+                        "cancel notification for unknown request"
+                    );
                 }
 
-                // Send completion notification
-                cx.send_notification(ResponseCompleteNotification { request_id })?;
-
-                // Send the response
-                request_cx.respond(ProvideResponseResponse {})
+                Ok(())
             })
             .await
             .otherwise(async |message| match message {

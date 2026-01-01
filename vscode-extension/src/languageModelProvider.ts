@@ -260,12 +260,36 @@ export class SymposiumLanguageModelProvider
   }
 
   /**
+   * Send a JSON-RPC notification (no response expected)
+   */
+  private sendNotification(method: string, params: unknown): void {
+    const proc = this.ensureProcess();
+
+    const notification: JsonRpcMessage = {
+      jsonrpc: "2.0",
+      method,
+      params,
+    };
+
+    const json = JSON.stringify(notification);
+    logger.debug("lm-provider", `sending notification: ${json}`);
+    proc.stdin?.write(json + "\n");
+  }
+
+  /**
    * Send a JSON-RPC request and wait for response
+   *
+   * @param method - The JSON-RPC method name
+   * @param params - The request parameters
+   * @param progress - Optional progress reporter for streaming responses
+   * @param token - Optional cancellation token. If provided and cancelled,
+   *                sends lm/cancel and throws CancellationError.
    */
   private async sendRequest(
     method: string,
     params: unknown,
     progress?: vscode.Progress<vscode.LanguageModelTextPart>,
+    token?: vscode.CancellationToken,
   ): Promise<unknown> {
     const proc = this.ensureProcess();
     const id = ++this.requestId;
@@ -277,13 +301,26 @@ export class SymposiumLanguageModelProvider
       params,
     };
 
-    return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject, progress });
+    // Set up cancellation handler
+    let cancelDisposable: vscode.Disposable | undefined;
+    if (token) {
+      cancelDisposable = token.onCancellationRequested(() => {
+        logger.debug("lm-provider", `cancellation requested for request ${id}`);
+        this.sendNotification("lm/cancel", { requestId: id });
+      });
+    }
 
-      const json = JSON.stringify(request);
-      logger.debug("lm-provider", `sending: ${json}`);
-      proc.stdin?.write(json + "\n");
-    });
+    try {
+      return await new Promise((resolve, reject) => {
+        this.pendingRequests.set(id, { resolve, reject, progress });
+
+        const json = JSON.stringify(request);
+        logger.debug("lm-provider", `sending: ${json}`);
+        proc.stdin?.write(json + "\n");
+      });
+    } finally {
+      cancelDisposable?.dispose();
+    }
   }
 
   /**
@@ -358,18 +395,23 @@ export class SymposiumLanguageModelProvider
       `provideLanguageModelChatResponse: agent=${agent.id}, messages=${JSON.stringify(convertedMessages)}`,
     );
 
-    // Set up cancellation
-    const abortController = new AbortController();
-    token.onCancellationRequested(() => {
-      abortController.abort();
-      // TODO: Send cancellation to the process
-    });
-
-    await this.sendRequest(
-      "lm/provideLanguageModelChatResponse",
-      { modelId: model.id, messages: convertedMessages, agent: agentDef },
-      progress,
-    );
+    try {
+      await this.sendRequest(
+        "lm/provideLanguageModelChatResponse",
+        { modelId: model.id, messages: convertedMessages, agent: agentDef },
+        progress,
+        token,
+      );
+    } catch (err) {
+      // Check if this is a cancellation error from the backend
+      if (
+        err instanceof Error &&
+        err.message.toLowerCase().includes("cancelled")
+      ) {
+        throw new vscode.CancellationError();
+      }
+      throw err;
+    }
   }
 
   /**
