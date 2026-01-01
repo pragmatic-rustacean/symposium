@@ -331,6 +331,16 @@ impl LmBackend {
             handler: LmBackendHandler::new(),
         }
     }
+
+    /// Create a new LmBackend with deterministic Eliza responses (for testing).
+    #[cfg(test)]
+    pub fn new_deterministic() -> Self {
+        Self {
+            handler: LmBackendHandler {
+                eliza: Eliza::new_deterministic(),
+            },
+        }
+    }
 }
 
 impl Default for LmBackend {
@@ -368,131 +378,106 @@ pub async fn serve_stdio() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sacp::Component;
+    use expect_test::expect;
 
     #[tokio::test]
-    async fn test_provide_info() {
-        let (channel, server_future) = LmBackend::new().into_server();
-
-        // Spawn the server
-        let server_handle = tokio::spawn(server_future);
-
-        // Create a client connection
-        let result = VsCodeToLmBackend::builder()
-            .run_until(channel, async |cx| {
+    async fn test_provide_info() -> Result<(), sacp::Error> {
+        VsCodeToLmBackend::builder()
+            .connect_to(LmBackend::new_deterministic())?
+            .run_until(async |cx| {
                 let response = cx
                     .send_request(ProvideInfoRequest { silent: false })
                     .block_task()
                     .await?;
 
-                assert_eq!(response.models.len(), 1);
-                assert_eq!(response.models[0].id, "symposium-eliza");
-                assert_eq!(response.models[0].name, "Symposium (Eliza)");
+                expect![[r#"
+                    ProvideInfoResponse {
+                        models: [
+                            ModelInfo {
+                                id: "symposium-eliza",
+                                name: "Symposium (Eliza)",
+                                family: "symposium",
+                                version: "1.0.0",
+                                max_input_tokens: 100000,
+                                max_output_tokens: 100000,
+                                capabilities: ModelCapabilities {
+                                    tool_calling: false,
+                                },
+                            },
+                        ],
+                    }
+                "#]]
+                .assert_debug_eq(&response);
 
                 Ok(())
             })
-            .await;
-
-        result.expect("client should succeed");
-        server_handle.abort();
+            .await
     }
 
     #[tokio::test]
-    async fn test_provide_token_count() {
-        let (channel, server_future) = LmBackend::new().into_server();
-        let server_handle = tokio::spawn(server_future);
-
-        let result = VsCodeToLmBackend::builder()
-            .run_until(channel, async |cx| {
+    async fn test_provide_token_count() -> Result<(), sacp::Error> {
+        VsCodeToLmBackend::builder()
+            .connect_to(LmBackend::new_deterministic())?
+            .run_until(async |cx| {
                 let response = cx
                     .send_request(ProvideTokenCountRequest {
                         model_id: "symposium-eliza".to_string(),
-                        text: "Hello, world!".to_string(), // 13 chars -> ~3 tokens
+                        text: "Hello, world!".to_string(),
                     })
                     .block_task()
                     .await?;
 
-                assert_eq!(response.count, 3);
+                expect![[r#"
+                    ProvideTokenCountResponse {
+                        count: 3,
+                    }
+                "#]]
+                .assert_debug_eq(&response);
 
                 Ok(())
             })
-            .await;
-
-        result.expect("client should succeed");
-        server_handle.abort();
+            .await
     }
 
     #[tokio::test]
-    async fn test_chat_response() {
-        use std::sync::Arc;
-        use tokio::sync::Mutex;
+    async fn test_chat_response() -> Result<(), sacp::Error> {
+        use std::sync::{Arc, Mutex};
 
-        let (channel, server_future) = LmBackend::new().into_server();
-        let server_handle = tokio::spawn(server_future);
-
-        // Collect streamed parts and track completion
         let parts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let complete: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
         let parts_clone = parts.clone();
-        let complete_clone = complete.clone();
 
-        let result = VsCodeToLmBackend::builder()
+        VsCodeToLmBackend::builder()
             .on_receive_notification(
-                async move |notif: ResponsePartNotification, _cx| {
+                move |notif: ResponsePartNotification, _cx| {
                     let ResponsePart::Text { value } = notif.part;
-                    parts_clone.lock().await.push(value);
-                    Ok(())
+                    parts_clone.lock().unwrap().push(value);
+                    async { Ok(()) }
                 },
                 sacp::on_receive_notification!(),
             )
-            .on_receive_notification(
-                async move |_notif: ResponseCompleteNotification, _cx| {
-                    *complete_clone.lock().await = true;
-                    Ok(())
-                },
-                sacp::on_receive_notification!(),
-            )
-            .run_until(channel, async |cx| {
-                let _response = cx
-                    .send_request(ProvideResponseRequest {
-                        model_id: "symposium-eliza".to_string(),
-                        messages: vec![Message {
-                            role: "user".to_string(),
-                            content: vec![ContentPart::Text {
-                                value: "I feel happy".to_string(),
-                            }],
+            .connect_to(LmBackend::new_deterministic())?
+            .run_until(async |cx| {
+                cx.send_request(ProvideResponseRequest {
+                    model_id: "symposium-eliza".to_string(),
+                    messages: vec![Message {
+                        role: "user".to_string(),
+                        content: vec![ContentPart::Text {
+                            value: "I feel happy".to_string(),
                         }],
-                    })
-                    .block_task()
-                    .await?;
-
-                // Wait a bit for notifications to arrive
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                    }],
+                })
+                .block_task()
+                .await?;
 
                 Ok(())
             })
-            .await;
+            .await?;
 
-        result.expect("client should succeed");
-
-        // Verify we got streamed parts
-        let collected_parts = parts.lock().await;
-        assert!(!collected_parts.is_empty(), "should receive response parts");
-
-        // Reconstruct the full response
+        let collected_parts = parts.lock().unwrap();
         let full_response: String = collected_parts.iter().cloned().collect();
-        assert!(
-            full_response.contains("happy"),
-            "Eliza should echo back the sentiment, got: {}",
-            full_response
-        );
 
-        // Verify completion was signaled
-        assert!(
-            *complete.lock().await,
-            "should receive completion notification"
-        );
+        expect![[r#"Do you often feel happy?"#]].assert_eq(&full_response);
 
-        server_handle.abort();
+        Ok(())
     }
 }

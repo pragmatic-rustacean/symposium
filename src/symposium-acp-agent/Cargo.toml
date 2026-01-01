@@ -30,3 +30,6 @@ symposium-ferris = { path = "../symposium-ferris", version = "1.0.1" }
 
 # Built-in agents
 elizacp.workspace = true
+
+[dev-dependencies]
+expect-test.workspace = true
