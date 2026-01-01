@@ -3599,8 +3599,6 @@ dependencies = [
  "anyhow",
  "clap",
  "elizacp",
- "futures",
- "jsonrpcmsg",
  "sacp",
  "sacp-conductor",
  "sacp-tokio",
