@@ -16,6 +16,9 @@ import {
   resolveDistribution,
   ResolvedCommand,
   AgentConfig,
+  fetchRegistry,
+  addAgentFromRegistry,
+  RegistryEntry,
 } from "./agentRegistry";
 
 /**
@@ -355,17 +358,37 @@ export class SymposiumLanguageModelProvider
 
   /**
    * Provide information about available language models.
-   * Returns one model per effective agent from the agent registry.
+   * Returns one model per effective agent, plus uninstalled agents from the registry.
    */
   async provideLanguageModelChatInformation(
     _options: { silent: boolean },
     _token: vscode.CancellationToken,
   ): Promise<vscode.LanguageModelChatInformation[]> {
-    const agents = getEffectiveAgents();
+    const effectiveAgents = getEffectiveAgents();
+    const effectiveIds = new Set(effectiveAgents.map((a) => a.id));
 
-    return agents.map((agent) => ({
+    // Fetch registry agents (non-blocking failure - just use effective agents if fetch fails)
+    let registryAgents: RegistryEntry[] = [];
+    try {
+      registryAgents = await fetchRegistry();
+    } catch (error) {
+      logger.warn("lm", `Failed to fetch agent registry: ${error}`);
+    }
+
+    // Filter registry to agents not already in effective list
+    const uninstalledAgents = registryAgents.filter(
+      (a) => !effectiveIds.has(a.id),
+    );
+
+    // Combine effective + uninstalled registry agents
+    const allAgents: Array<AgentConfig | RegistryEntry> = [
+      ...effectiveAgents,
+      ...uninstalledAgents,
+    ];
+
+    return allAgents.map((agent) => ({
       id: agent.id,
-      name: agent.name ?? agent.id,
+      name: `${agent.name ?? agent.id} (ACP)`,
       family: "symposium",
       version: agent.version ?? "1.0.0",
       maxInputTokens: 100000,
@@ -387,9 +410,11 @@ export class SymposiumLanguageModelProvider
     token: vscode.CancellationToken,
   ): Promise<void> {
     // Look up the agent by the model ID (which is the agent ID)
-    const agent = getAgentById(model.id);
+    let agent = getAgentById(model.id);
+
+    // If not found in effective agents, try to install from registry
     if (!agent) {
-      throw new Error(`Unknown agent: ${model.id}`);
+      agent = await this.installAgentFromRegistry(model.id);
     }
 
     // Resolve the agent distribution to a spawn command
@@ -585,6 +610,47 @@ export class SymposiumLanguageModelProvider
         return "";
       })
       .join("");
+  }
+
+  /**
+   * Install an agent from the registry by ID.
+   * Fetches the registry, finds the agent, and adds it to settings.
+   * Returns the agent config after installation.
+   */
+  private async installAgentFromRegistry(
+    agentId: string,
+  ): Promise<AgentConfig> {
+    logger.info("lm", `Installing agent from registry: ${agentId}`);
+
+    // Fetch the registry
+    let registryAgents: RegistryEntry[];
+    try {
+      registryAgents = await fetchRegistry();
+    } catch (error) {
+      throw new Error(
+        `Failed to fetch agent registry: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    // Find the agent in the registry
+    const registryEntry = registryAgents.find((a) => a.id === agentId);
+    if (!registryEntry) {
+      throw new Error(`Agent "${agentId}" not found in registry`);
+    }
+
+    // Add to settings
+    await addAgentFromRegistry(registryEntry);
+    logger.info("lm", `Installed agent: ${registryEntry.name}`);
+
+    // Return as AgentConfig
+    return {
+      id: registryEntry.id,
+      name: registryEntry.name,
+      version: registryEntry.version,
+      description: registryEntry.description,
+      distribution: registryEntry.distribution,
+      _source: "registry",
+    };
   }
 
   /**
