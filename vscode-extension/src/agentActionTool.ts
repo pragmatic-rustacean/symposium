@@ -68,15 +68,15 @@ export class AgentActionTool
   /**
    * Invoke the tool - called after user approves.
    *
-   * We return an empty result since the actual tool execution happens
-   * on the agent side. This just signals approval.
+   * The actual tool execution happens on the agent side. We return
+   * a simple confirmation message so VS Code doesn't show an error.
    */
   async invoke(
     _options: vscode.LanguageModelToolInvocationOptions<AgentActionInput>,
     _token: vscode.CancellationToken,
   ): Promise<vscode.LanguageModelToolResult> {
-    // Return empty content - the approval is signaled by the tool result
-    // appearing in the message history
-    return new vscode.LanguageModelToolResult([]);
+    return new vscode.LanguageModelToolResult([
+      new vscode.LanguageModelTextPart("Approved"),
+    ]);
   }
 }

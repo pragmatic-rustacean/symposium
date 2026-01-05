@@ -143,6 +143,28 @@ impl Message {
             matches!(part, ContentPart::ToolCall { tool_call_id: id, .. } if id == tool_call_id)
         })
     }
+
+    /// Normalize the message by coalescing consecutive Text parts.
+    pub fn normalize(&mut self) {
+        let mut normalized = Vec::with_capacity(self.content.len());
+        for part in self.content.drain(..) {
+            if let ContentPart::Text { value: new_text } = &part {
+                if let Some(ContentPart::Text { value: existing }) = normalized.last_mut() {
+                    existing.push_str(new_text);
+                    continue;
+                }
+            }
+            normalized.push(part);
+        }
+        self.content = normalized;
+    }
+}
+
+/// Normalize a vector of messages in place.
+pub fn normalize_messages(messages: &mut Vec<Message>) {
+    for msg in messages.iter_mut() {
+        msg.normalize();
+    }
 }
 
 // ============================================================================

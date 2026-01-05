@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use super::session_actor::{AgentDefinition, SessionActor};
 use super::{
-    ContentPart, Message, ProvideResponseRequest, ProvideResponseResponse,
+    normalize_messages, ContentPart, Message, ProvideResponseRequest, ProvideResponseResponse,
     ResponseCompleteNotification, ResponsePartNotification, ROLE_ASSISTANT, SYMPOSIUM_AGENT_ACTION,
 };
 use sacp::JrConnectionCx;
@@ -165,11 +165,24 @@ impl SessionData {
     fn match_history(&self, incoming: &[Message]) -> Option<HistoryMatch> {
         let committed_len = self.committed.len();
 
+        tracing::trace!(
+            ?incoming,
+            ?self.committed,
+            ?self.provisional_messages,
+            "match_history"
+        );
+
         // Incoming must at least start with committed
         if incoming.len() < committed_len {
+            tracing::trace!(
+                incoming_len = incoming.len(),
+                committed_len,
+                "match_history: incoming shorter than committed"
+            );
             return None;
         }
         if &incoming[..committed_len] != self.committed.as_slice() {
+            tracing::trace!(committed_len, "match_history: committed prefix mismatch");
             return None;
         }
 
@@ -178,6 +191,27 @@ impl SessionData {
         // Check if the new messages have the provisional messages as a prefix
         if !after_committed.starts_with(&self.provisional_messages) {
             // They do not. This must be a cancellation of the provisional content.
+            tracing::debug!(
+                after_committed_len = after_committed.len(),
+                provisional_len = self.provisional_messages.len(),
+                "match_history: provisional mismatch, marking as canceled"
+            );
+            // Log the first differing message for debugging
+            for (i, (incoming_msg, provisional_msg)) in after_committed
+                .iter()
+                .zip(&self.provisional_messages)
+                .enumerate()
+            {
+                if incoming_msg != provisional_msg {
+                    tracing::debug!(
+                        index = i,
+                        ?incoming_msg,
+                        ?provisional_msg,
+                        "match_history: first mismatch"
+                    );
+                    break;
+                }
+            }
             return Some(HistoryMatch {
                 new_messages: after_committed.to_vec(),
                 canceled: true,
@@ -281,11 +315,15 @@ impl HistoryActor {
     /// Handle a request from VS Code.
     fn handle_vscode_request(
         &mut self,
-        request: ProvideResponseRequest,
+        mut request: ProvideResponseRequest,
         request_id: serde_json::Value,
         request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
     ) -> Result<(), sacp::Error> {
         tracing::debug!(?request, "HistoryActor: received VS Code request");
+
+        // Normalize incoming messages to coalesce consecutive text parts.
+        // This ensures consistent comparison with our provisional history.
+        normalize_messages(&mut request.messages);
 
         // Find session with best history match
         let best_match = self
@@ -424,6 +462,10 @@ impl HistoryActor {
                     .send_notification(ResponsePartNotification { request_id, part })?;
             }
             SessionToHistoryMessage::Complete => {
+                // Normalize provisional messages before completion.
+                // This ensures history matching works correctly on subsequent requests.
+                normalize_messages(&mut session_data.provisional_messages);
+
                 // Send completion notification
                 self.cx
                     .send_notification(ResponseCompleteNotification { request_id })?;
