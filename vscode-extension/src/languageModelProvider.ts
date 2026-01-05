@@ -380,11 +380,11 @@ export class SymposiumLanguageModelProvider
       (a) => !effectiveIds.has(a.id),
     );
 
-    // Combine effective + uninstalled registry agents
+    // Combine effective + uninstalled registry agents, sorted alphabetically
     const allAgents: Array<AgentConfig | RegistryEntry> = [
       ...effectiveAgents,
       ...uninstalledAgents,
-    ];
+    ].sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
 
     return allAgents.map((agent) => ({
       id: agent.id,

@@ -229,7 +229,9 @@ export class SettingsViewProvider implements vscode.WebviewViewProvider {
         installed: false,
       }));
 
-    const agents = [...installedAgents, ...uninstalledAgents];
+    const agents = [...installedAgents, ...uninstalledAgents].sort((a, b) =>
+      (a.name ?? a.id).localeCompare(b.name ?? b.id),
+    );
 
     const currentAgentId = getCurrentAgentId();
     const requireModifierToSend = config.get<boolean>(
