@@ -11,11 +11,15 @@ import * as vscode from "vscode";
 /**
  * Input schema for the symposium-agent-action tool.
  * Matches the ACP RequestPermissionRequest.tool_call fields.
+ *
+ * Note: toolCallId is NOT part of the input - VS Code provides it
+ * separately through the LanguageModelToolCallPart structure.
  */
 export interface AgentActionInput {
-  toolCallId: string;
   title?: string;
   kind?: string;
+  // Raw input varies by tool - we don't know its structure
+  raw_input?: Record<string, unknown>;
 }
 
 /**
@@ -35,18 +39,28 @@ export class AgentActionTool
     options: vscode.LanguageModelToolInvocationPrepareOptions<AgentActionInput>,
     _token: vscode.CancellationToken,
   ): Promise<vscode.PreparedToolInvocation> {
-    const { title, kind } = options.input;
+    const { title, kind, raw_input } = options.input;
 
     // Build a descriptive message for the confirmation dialog
-    const actionDescription = title || kind || "execute an action";
+    const actionTitle = title || kind || "execute an action";
+
+    // Some tools (e.g., Claude Code's bash) include a description field
+    const description =
+      raw_input?.description && typeof raw_input.description === "string"
+        ? raw_input.description
+        : undefined;
+
+    // Build markdown message with optional description
+    let messageText = `Allow the agent to **${actionTitle}**?`;
+    if (description) {
+      messageText += `\n\n${description}`;
+    }
 
     return {
-      invocationMessage: `Executing: ${actionDescription}`,
+      invocationMessage: `Executing: ${actionTitle}`,
       confirmationMessages: {
         title: "Agent Action",
-        message: new vscode.MarkdownString(
-          `Allow the agent to **${actionDescription}**?`,
-        ),
+        message: new vscode.MarkdownString(messageText),
       },
     };
   }
