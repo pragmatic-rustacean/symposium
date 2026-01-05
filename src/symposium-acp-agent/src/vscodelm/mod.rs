@@ -132,6 +132,11 @@ impl Message {
         })
     }
 
+    /// Check if the message contains ONLY a tool result for the given tool call ID and nothing else
+    pub fn has_just_tool_result(&self, tool_call_id: &str) -> bool {
+        self.content.len() == 1 && self.has_tool_result(tool_call_id)
+    }
+
     /// Check if the message contains a tool call with the given ID
     pub fn has_tool_call(&self, tool_call_id: &str) -> bool {
         self.content.iter().any(|part| {
@@ -267,18 +272,12 @@ impl LmBackendHandler {
     fn get_or_create_history_handle(
         &mut self,
         cx: &JrConnectionCx<LmBackendToVsCode>,
-    ) -> &HistoryActorHandle {
+    ) -> Result<&HistoryActorHandle, sacp::Error> {
         if self.history_handle.is_none() {
-            let (actor, handle) = HistoryActor::new(cx.clone());
-            // Spawn the actor to run in the background
-            tokio::spawn(async move {
-                if let Err(e) = actor.run().await {
-                    tracing::error!(?e, "HistoryActor error");
-                }
-            });
+            let handle = HistoryActor::new(&cx)?;
             self.history_handle = Some(handle);
         }
-        self.history_handle.as_ref().unwrap()
+        Ok(self.history_handle.as_ref().unwrap())
     }
 }
 
@@ -297,7 +296,7 @@ impl JrMessageHandler for LmBackendHandler {
         tracing::trace!(?message, "handle_message");
 
         // Get or create the history actor handle (lazy init on first call)
-        let history_handle = self.get_or_create_history_handle(&cx).clone();
+        let history_handle = self.get_or_create_history_handle(&cx)?.clone();
 
         MatchMessage::new(message)
             .if_request(async |_req: ProvideInfoRequest, request_cx| {
@@ -327,7 +326,7 @@ impl JrMessageHandler for LmBackendHandler {
                 let request_id = request_cx.id().clone();
 
                 // Forward to HistoryActor for processing
-                history_handle.send_from_vscode(req, request_id, request_cx);
+                history_handle.send_from_vscode(req, request_id, request_cx)?;
 
                 Ok(())
             })
@@ -336,7 +335,7 @@ impl JrMessageHandler for LmBackendHandler {
                 tracing::debug!(?notification, "CancelNotification");
 
                 // Forward to HistoryActor
-                history_handle.send_cancel_from_vscode(notification.request_id);
+                history_handle.send_cancel_from_vscode(notification.request_id)?;
 
                 Ok(())
             })

@@ -4,7 +4,7 @@
 //! messages from the HistoryActor and sends response parts back to it.
 
 use elizacp::ElizaAgent;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use futures::stream::Peekable;
 use futures::{FutureExt, StreamExt, TryFutureExt};
 use futures_concurrency::future::FutureExt as _;
@@ -45,14 +45,14 @@ pub struct SessionRequest {
     pub messages: Vec<Message>,
     /// Whether this request represents a cancellation of previous work
     pub canceled: bool,
+    /// Cancelation channel for this request
+    pub cancel_rx: oneshot::Receiver<()>,
 }
 
 /// Handle for communicating with a session actor.
 pub struct SessionActor {
     /// Channel to send requests to the actor
     tx: mpsc::UnboundedSender<SessionRequest>,
-    /// Channel to signal cancellation
-    cancel_tx: Option<mpsc::UnboundedSender<()>>,
     /// Unique identifier for this session
     session_id: Uuid,
 }
@@ -64,25 +64,14 @@ impl SessionActor {
         agent_definition: AgentDefinition,
     ) -> Result<Self, sacp::Error> {
         let (tx, rx) = mpsc::unbounded();
-        let (cancel_tx, cancel_rx) = mpsc::unbounded();
         let session_id = Uuid::new_v4();
 
         tracing::info!(%session_id, ?agent_definition, "spawning new session actor");
 
         // Spawn the actor task
-        tokio::spawn(Self::run(
-            rx,
-            cancel_rx,
-            history_handle,
-            agent_definition,
-            session_id,
-        ));
+        tokio::spawn(Self::run(rx, history_handle, agent_definition, session_id));
 
-        Ok(Self {
-            tx,
-            cancel_tx: Some(cancel_tx),
-            session_id,
-        })
+        Ok(Self { tx, session_id })
     }
 
     /// Returns the session ID.
@@ -91,23 +80,22 @@ impl SessionActor {
     }
 
     /// Send messages to the session actor.
-    pub fn send_messages(&self, messages: Vec<Message>, canceled: bool) {
-        let _ = self
-            .tx
-            .unbounded_send(SessionRequest { messages, canceled });
-    }
-
-    /// Cancel the current operation.
-    pub fn cancel(&self) {
-        if let Some(ref cancel_tx) = self.cancel_tx {
-            let _ = cancel_tx.unbounded_send(());
-        }
+    pub fn send_messages(
+        &self,
+        messages: Vec<Message>,
+        canceled: bool,
+        cancel_rx: oneshot::Receiver<()>,
+    ) {
+        let _ = self.tx.unbounded_send(SessionRequest {
+            messages,
+            canceled,
+            cancel_rx,
+        });
     }
 
     /// The actor's main run loop.
     async fn run(
         request_rx: mpsc::UnboundedReceiver<SessionRequest>,
-        cancel_rx: mpsc::UnboundedReceiver<()>,
         history_handle: HistoryActorHandle,
         agent_definition: AgentDefinition,
         session_id: Uuid,
@@ -117,31 +105,17 @@ impl SessionActor {
         let result = match agent_definition {
             AgentDefinition::Eliza { deterministic } => {
                 let agent = ElizaAgent::new(deterministic);
-                Self::run_with_agent(
-                    request_rx,
-                    cancel_rx,
-                    history_handle.clone(),
-                    agent,
-                    session_id,
-                )
-                .await
+                Self::run_with_agent(request_rx, history_handle.clone(), agent, session_id).await
             }
             AgentDefinition::McpServer(config) => {
                 let agent = AcpAgent::new(config);
-                Self::run_with_agent(
-                    request_rx,
-                    cancel_rx,
-                    history_handle.clone(),
-                    agent,
-                    session_id,
-                )
-                .await
+                Self::run_with_agent(request_rx, history_handle.clone(), agent, session_id).await
             }
         };
 
         if let Err(ref e) = result {
             history_handle
-                .send_from_session(session_id, SessionToHistoryMessage::Error(e.to_string()));
+                .send_from_session(session_id, SessionToHistoryMessage::Error(e.to_string()))?;
         }
 
         result
@@ -150,7 +124,6 @@ impl SessionActor {
     /// Run the session with a specific agent component.
     async fn run_with_agent(
         request_rx: mpsc::UnboundedReceiver<SessionRequest>,
-        cancel_rx: mpsc::UnboundedReceiver<()>,
         history_handle: HistoryActorHandle,
         agent: impl Component<sacp::link::AgentToClient>,
         session_id: Uuid,
@@ -167,14 +140,13 @@ impl SessionActor {
 
                 tracing::debug!(%session_id, "agent initialized, creating session");
 
-                Self::run_with_cx(request_rx, cancel_rx, history_handle, cx, session_id).await
+                Self::run_with_cx(request_rx, history_handle, cx, session_id).await
             })
             .await
     }
 
     async fn run_with_cx(
         request_rx: mpsc::UnboundedReceiver<SessionRequest>,
-        mut cancel_rx: mpsc::UnboundedReceiver<()>,
         history_handle: HistoryActorHandle,
         cx: JrConnectionCx<ClientToAgent>,
         session_id: Uuid,
@@ -194,9 +166,14 @@ impl SessionActor {
             let new_message_count = request.messages.len();
             tracing::debug!(%session_id, new_message_count, canceled = request.canceled, "received request");
 
+            let SessionRequest {
+                messages,
+                canceled: _,
+                mut cancel_rx,
+            } = request;
+
             // Build prompt from messages
-            let prompt_text: String = request
-                .messages
+            let prompt_text: String = messages
                 .iter()
                 .filter(|m| m.role == ROLE_USER)
                 .map(|m| m.text())
@@ -205,7 +182,7 @@ impl SessionActor {
 
             if prompt_text.is_empty() {
                 tracing::debug!(%session_id, "no user messages, skipping");
-                history_handle.send_from_session(session_id, SessionToHistoryMessage::Complete);
+                history_handle.send_from_session(session_id, SessionToHistoryMessage::Complete)?;
                 continue;
             }
 
@@ -215,28 +192,32 @@ impl SessionActor {
             // Read updates from the agent
             let canceled = loop {
                 // Wait for either an update or a cancellation
+                let cancel_future = (&mut cancel_rx).map(|_| Ok(None));
                 let update = session
                     .read_update()
                     .map_ok(Some)
-                    .race(cancel_rx.next().map(|_| Ok(None)))
+                    .race(cancel_future)
                     .await?;
 
                 let Some(update) = update else {
+                    // Canceled
                     break true;
                 };
 
                 match update {
                     sacp::SessionMessage::SessionMessage(message) => {
-                        let should_break = Self::process_session_message(
+                        let new_cancel_rx = Self::process_session_message(
                             message,
                             &history_handle,
                             &mut request_rx,
+                            cancel_rx,
                             session_id,
                         )
                         .await?;
 
-                        if should_break {
-                            break true;
+                        match new_cancel_rx {
+                            Some(c) => cancel_rx = c,
+                            None => break true,
                         }
                     }
                     sacp::SessionMessage::StopReason(stop_reason) => {
@@ -255,7 +236,7 @@ impl SessionActor {
                 ))?;
             } else {
                 // Turn completed normally
-                history_handle.send_from_session(session_id, SessionToHistoryMessage::Complete);
+                history_handle.send_from_session(session_id, SessionToHistoryMessage::Complete)?;
             }
         }
 
@@ -264,16 +245,19 @@ impl SessionActor {
     }
 
     /// Process a single session message from the ACP agent.
-    /// Returns true if we should break out of the update loop.
+    /// This will end the turn on the vscode side, so we consume the `cancel_rx`.
+    /// Returns `Some` with a new `cancel_rx` if tool use was approved (and sends that response to the agent).
+    /// Returns `None` if tool use was declined; the outer loop should await a new prompt.
     async fn process_session_message(
         message: MessageCx,
         history_handle: &HistoryActorHandle,
         request_rx: &mut Peekable<mpsc::UnboundedReceiver<SessionRequest>>,
+        cancel_rx: oneshot::Receiver<()>,
         session_id: Uuid,
-    ) -> Result<bool, sacp::Error> {
+    ) -> Result<Option<oneshot::Receiver<()>>, sacp::Error> {
         use sacp::util::MatchMessage;
 
-        let mut should_break = false;
+        let mut return_value = Some(cancel_rx);
 
         MatchMessage::new(message)
             .if_notification(async |notif: SessionNotification| {
@@ -283,7 +267,7 @@ impl SessionActor {
                         history_handle.send_from_session(
                             session_id,
                             SessionToHistoryMessage::Part(ContentPart::Text { value: text }),
-                        );
+                        )?;
                     }
                 }
                 Ok(())
@@ -316,8 +300,10 @@ impl SessionActor {
                     ..
                 } = perm_request;
 
+                let tool_call_id_str = tool_call_id.to_string();
+
                 let tool_call = ContentPart::ToolCall {
-                    tool_call_id: tool_call_id.to_string(),
+                    tool_call_id: tool_call_id_str.clone(),
                     tool_name: SYMPOSIUM_AGENT_ACTION.to_string(),
                     parameters: serde_json::json!({
                         "kind": kind,
@@ -330,35 +316,33 @@ impl SessionActor {
                 history_handle.send_from_session(
                     session_id,
                     SessionToHistoryMessage::Part(tool_call),
-                );
+                )?;
 
                 // Signal completion so VS Code shows the confirmation UI
-                history_handle.send_from_session(session_id, SessionToHistoryMessage::Complete);
+                history_handle.send_from_session(session_id, SessionToHistoryMessage::Complete)?;
+
+                // Drop the cancel_rx because we just signaled completion.
+                return_value = None;
 
                 // Wait for the next request (which will have the tool result if approved)
-                let mut pinned_rx = Pin::new(request_rx);
-                let Some(next_request) = pinned_rx.as_mut().peek().await else {
+                let Some(next_request) = Pin::new(&mut *request_rx).peek().await else {
                     request_cx.respond(RequestPermissionResponse::new(
                         RequestPermissionOutcome::Cancelled,
                     ))?;
-                    should_break = true;
                     return Ok(());
                 };
 
-                // Check if canceled (history mismatch = rejection)
-                if next_request.canceled {
-                    tracing::debug!(%session_id, "permission denied via history mismatch");
+                // Check if canceled (history mismatch = rejection) or does not contain expected tool-use result
+                if next_request.canceled || !next_request.messages[0].has_just_tool_result(&tool_call_id_str) {
+                    tracing::debug!(%session_id, ?next_request, "permission denied, did not receive approval");
                     request_cx.respond(RequestPermissionResponse::new(
                         RequestPermissionOutcome::Cancelled,
                     ))?;
-                    should_break = true;
                     return Ok(());
                 }
 
-                // Consume the request
-                let _ = pinned_rx.next().await;
-
-                // Permission approved - find allow-once option
+                // Permission approved - find allow-once option and send.
+                // If there is no such option, just cancel.
                 let approve_once_outcome = options
                     .into_iter()
                     .find(|option| {
@@ -376,9 +360,15 @@ impl SessionActor {
                         request_cx.respond(RequestPermissionResponse::new(
                             RequestPermissionOutcome::Cancelled,
                         ))?;
-                        should_break = true;
+                        return Ok(());
                     }
                 }
+
+                // Consume the request
+                let SessionRequest { messages, canceled, cancel_rx } = request_rx.next().await.expect("message is waiting");
+                assert_eq!(canceled, false);
+                assert_eq!(messages.len(), 1);
+                return_value = Some(cancel_rx);
 
                 Ok(())
             })
@@ -397,7 +387,7 @@ impl SessionActor {
             })
             .await?;
 
-        Ok(should_break)
+        Ok(return_value)
     }
 }
 

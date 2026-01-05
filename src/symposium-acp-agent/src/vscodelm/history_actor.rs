@@ -5,7 +5,7 @@
 //! and from SessionActors (outgoing parts). This centralizes all mutable
 //! state in one actor with proper &mut access.
 
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use futures::StreamExt;
 use uuid::Uuid;
 
@@ -62,11 +62,17 @@ pub struct HistoryActorHandle {
 
 impl HistoryActorHandle {
     /// Send a message from a session to the history actor.
-    pub fn send_from_session(&self, session_id: Uuid, message: SessionToHistoryMessage) {
-        let _ = self.tx.unbounded_send(HistoryActorMessage::FromSession {
-            session_id,
-            message,
-        });
+    pub fn send_from_session(
+        &self,
+        session_id: Uuid,
+        message: SessionToHistoryMessage,
+    ) -> Result<(), sacp::Error> {
+        self.tx
+            .unbounded_send(HistoryActorMessage::FromSession {
+                session_id,
+                message,
+            })
+            .map_err(|_| sacp::util::internal_error("no history actor"))
     }
 
     /// Send a VS Code request to the history actor.
@@ -75,19 +81,24 @@ impl HistoryActorHandle {
         request: ProvideResponseRequest,
         request_id: serde_json::Value,
         request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
-    ) {
-        let _ = self.tx.unbounded_send(HistoryActorMessage::FromVsCode {
-            request,
-            request_id,
-            request_cx,
-        });
+    ) -> Result<(), sacp::Error> {
+        self.tx
+            .unbounded_send(HistoryActorMessage::FromVsCode {
+                request,
+                request_id,
+                request_cx,
+            })
+            .map_err(|_| sacp::util::internal_error("no history actor"))
     }
 
     /// Send a cancel notification from VS Code.
-    pub fn send_cancel_from_vscode(&self, request_id: serde_json::Value) {
-        let _ = self
-            .tx
-            .unbounded_send(HistoryActorMessage::CancelFromVsCode { request_id });
+    pub fn send_cancel_from_vscode(
+        &self,
+        request_id: serde_json::Value,
+    ) -> Result<(), sacp::Error> {
+        self.tx
+            .unbounded_send(HistoryActorMessage::CancelFromVsCode { request_id })
+            .map_err(|_| sacp::util::internal_error("no history actor"))
     }
 }
 
@@ -115,6 +126,12 @@ struct StreamingState {
     request_id: serde_json::Value,
     /// The request context for responding when done
     request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
+    /// Channel to signal cancellation
+    ///
+    /// We never actually send a signal on this channel, we just
+    /// drop it once we stop streaming.
+    #[expect(dead_code)]
+    cancel_tx: oneshot::Sender<()>,
 }
 
 /// Result of matching incoming messages against session history.
@@ -192,7 +209,8 @@ impl SessionData {
 
     /// Start a new provisional exchange.
     fn start_provisional(&mut self, messages: Vec<Message>) {
-        self.provisional_messages = messages;
+        assert!(self.provisional_messages.is_empty());
+        self.provisional_messages.extend(messages);
     }
 }
 
@@ -214,16 +232,17 @@ pub struct HistoryActor {
 
 impl HistoryActor {
     /// Create a new HistoryActor and return a handle to it.
-    pub fn new(cx: JrConnectionCx<LmBackendToVsCode>) -> (Self, HistoryActorHandle) {
+    pub fn new(cx: &JrConnectionCx<LmBackendToVsCode>) -> Result<HistoryActorHandle, sacp::Error> {
         let (tx, rx) = mpsc::unbounded();
         let handle = HistoryActorHandle { tx };
         let actor = Self {
             rx,
             handle: handle.clone(),
-            cx,
+            cx: cx.clone(),
             sessions: Vec::new(),
         };
-        (actor, handle)
+        cx.spawn(async move { actor.run().await })?;
+        Ok(handle)
     }
 
     /// Run the actor's main loop.
@@ -297,31 +316,30 @@ impl HistoryActor {
         // Handle cancellation if needed
         if history_match.canceled {
             session_data.discard_provisional();
-        }
-
-        // If there are no new messages, respond immediately
-        if history_match.new_messages.is_empty() {
-            return request_cx.respond(ProvideResponseResponse {});
-        }
-
-        // Commit any previous provisional (new messages confirm it was accepted)
-        if !history_match.canceled {
+        } else {
+            // Commit any previous provisional (new messages confirm it was accepted)
             session_data.commit_provisional();
         }
 
         // Start new provisional with the new messages
         session_data.start_provisional(history_match.new_messages.clone());
 
+        // Create cancellation
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+
         // Store streaming state
         session_data.streaming = Some(StreamingState {
             request_id,
             request_cx,
+            cancel_tx,
         });
 
         // Send to session actor
-        session_data
-            .actor
-            .send_messages(history_match.new_messages, history_match.canceled);
+        session_data.actor.send_messages(
+            history_match.new_messages,
+            history_match.canceled,
+            cancel_rx,
+        );
 
         Ok(())
     }
@@ -330,14 +348,15 @@ impl HistoryActor {
     fn handle_vscode_cancel(&mut self, request_id: serde_json::Value) {
         tracing::debug!(?request_id, "HistoryActor: received cancel");
 
-        // Find the session streaming this request
+        // Find and cancel the session streaming this request
         if let Some(session_data) = self
             .sessions
             .iter_mut()
             .find(|s| matches!(&s.streaming, Some(st) if st.request_id == request_id))
         {
+            // Dropping this will drop the oneshot-sender which
+            // effectively sends a cancel message.
             session_data.streaming = None;
-            session_data.actor.cancel();
             tracing::debug!(
                 session_id = %session_data.actor.session_id(),
                 "cancelled streaming response"
