@@ -55,6 +55,7 @@ async function directoryExists(dirPath: string): Promise<boolean> {
  * Availability checks for built-in agents.
  * If an agent is not in this map, it's always available.
  */
+/* eslint-disable @typescript-eslint/naming-convention -- agent IDs use kebab-case */
 const AVAILABILITY_CHECKS: Record<string, () => Promise<AvailabilityStatus>> = {
   "zed-claude-code": async () => {
     const claudeDir = path.join(os.homedir(), ".claude");
@@ -83,6 +84,7 @@ const AVAILABILITY_CHECKS: Record<string, () => Promise<AvailabilityStatus>> = {
   },
   // elizacp has no check - always available (symposium builtin)
 };
+/* eslint-enable @typescript-eslint/naming-convention */
 
 /**
  * Check availability for a single agent

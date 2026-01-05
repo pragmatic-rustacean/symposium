@@ -45,8 +45,30 @@ pub struct SessionRequest {
     pub messages: Vec<Message>,
     /// Whether this request represents a cancellation of previous work
     pub canceled: bool,
+    /// Per-request state that travels with the request
+    pub state: RequestState,
+}
+
+/// Per-request state that needs to be passed through message processing.
+/// This is bundled together because both values can change between requests.
+#[derive(Debug)]
+pub struct RequestState {
     /// Cancelation channel for this request
     pub cancel_rx: oneshot::Receiver<()>,
+    /// Whether the internal tool (symposium-agent-action) is available.
+    /// If false, all permission requests should be auto-denied.
+    pub has_internal_tool: bool,
+}
+
+impl RequestState {
+    /// Returns a future that completes when cancellation is requested.
+    /// The future resolves to `Ok(None)` to signal cancellation in select/race patterns.
+    pub fn cancellation(
+        &mut self,
+    ) -> impl std::future::Future<Output = Result<Option<sacp::SessionMessage>, sacp::Error>> + '_
+    {
+        (&mut self.cancel_rx).map(|_| Ok(None))
+    }
 }
 
 /// Handle for communicating with a session actor.
@@ -85,11 +107,15 @@ impl SessionActor {
         messages: Vec<Message>,
         canceled: bool,
         cancel_rx: oneshot::Receiver<()>,
+        has_internal_tool: bool,
     ) {
         let _ = self.tx.unbounded_send(SessionRequest {
             messages,
             canceled,
-            cancel_rx,
+            state: RequestState {
+                cancel_rx,
+                has_internal_tool,
+            },
         });
     }
 
@@ -169,7 +195,7 @@ impl SessionActor {
             let SessionRequest {
                 messages,
                 canceled: _,
-                mut cancel_rx,
+                state: mut request_state,
             } = request;
 
             // Build prompt from messages
@@ -192,11 +218,10 @@ impl SessionActor {
             // Read updates from the agent
             let canceled = loop {
                 // Wait for either an update or a cancellation
-                let cancel_future = (&mut cancel_rx).map(|_| Ok(None));
                 let update = session
                     .read_update()
                     .map_ok(Some)
-                    .race(cancel_future)
+                    .race(request_state.cancellation())
                     .await?;
 
                 let Some(update) = update else {
@@ -206,17 +231,17 @@ impl SessionActor {
 
                 match update {
                     sacp::SessionMessage::SessionMessage(message) => {
-                        let new_cancel_rx = Self::process_session_message(
+                        let new_state = Self::process_session_message(
                             message,
                             &history_handle,
                             &mut request_rx,
-                            cancel_rx,
+                            request_state,
                             session_id,
                         )
                         .await?;
 
-                        match new_cancel_rx {
-                            Some(c) => cancel_rx = c,
+                        match new_state {
+                            Some(s) => request_state = s,
                             None => break true,
                         }
                     }
@@ -245,19 +270,20 @@ impl SessionActor {
     }
 
     /// Process a single session message from the ACP agent.
-    /// This will end the turn on the vscode side, so we consume the `cancel_rx`.
-    /// Returns `Some` with a new `cancel_rx` if tool use was approved (and sends that response to the agent).
+    /// This will end the turn on the vscode side, so we consume the `request_state`.
+    /// Returns `Some` with a new `RequestState` if tool use was approved (and sends that response to the agent).
     /// Returns `None` if tool use was declined; the outer loop should await a new prompt.
     async fn process_session_message(
         message: MessageCx,
         history_handle: &HistoryActorHandle,
         request_rx: &mut Peekable<mpsc::UnboundedReceiver<SessionRequest>>,
-        cancel_rx: oneshot::Receiver<()>,
+        request_state: RequestState,
         session_id: Uuid,
-    ) -> Result<Option<oneshot::Receiver<()>>, sacp::Error> {
+    ) -> Result<Option<RequestState>, sacp::Error> {
         use sacp::util::MatchMessage;
 
-        let mut return_value = Some(cancel_rx);
+        let has_internal_tool = request_state.has_internal_tool;
+        let mut return_value = Some(request_state);
 
         MatchMessage::new(message)
             .if_notification(async |notif: SessionNotification| {
@@ -274,7 +300,16 @@ impl SessionActor {
             })
             .await
             .if_request(async |perm_request: RequestPermissionRequest, request_cx| {
-                tracing::debug!(%session_id, ?perm_request, "received permission request");
+                tracing::debug!(%session_id, has_internal_tool, ?perm_request, "received permission request");
+
+                // If the internal tool is not available, auto-deny all permission requests
+                if !has_internal_tool {
+                    tracing::info!(%session_id, "auto-denying permission request: internal tool not available");
+                    request_cx.respond(RequestPermissionResponse::new(
+                        RequestPermissionOutcome::Cancelled,
+                    ))?;
+                    return Ok(());
+                }
 
                 let RequestPermissionRequest {
                     session_id: _,
@@ -364,11 +399,11 @@ impl SessionActor {
                     }
                 }
 
-                // Consume the request
-                let SessionRequest { messages, canceled, cancel_rx } = request_rx.next().await.expect("message is waiting");
+                // Consume the request and use its state for the next iteration
+                let SessionRequest { messages, canceled, state } = request_rx.next().await.expect("message is waiting");
                 assert_eq!(canceled, false);
                 assert_eq!(messages.len(), 1);
-                return_value = Some(cancel_rx);
+                return_value = Some(state);
 
                 Ok(())
             })

@@ -145,6 +145,38 @@ impl Message {
     }
 }
 
+// ============================================================================
+// Request Options Types
+// ============================================================================
+
+/// Tool definition passed in request options
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// Tool mode for chat requests
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolMode {
+    #[default]
+    Auto,
+    Required,
+}
+
+/// Options for chat requests from VS Code
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatRequestOptions {
+    #[serde(default)]
+    pub tools: Vec<ToolDefinition>,
+    #[serde(default)]
+    pub tool_mode: Option<ToolMode>,
+}
+
 /// Model information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -192,6 +224,8 @@ pub struct ProvideResponseRequest {
     pub model_id: String,
     pub messages: Vec<Message>,
     pub agent: session_actor::AgentDefinition,
+    #[serde(default)]
+    pub options: ChatRequestOptions,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JrResponsePayload)]
@@ -508,6 +542,35 @@ mod tests {
     // because they relied on the old in-process Eliza implementation.
     // With the new architecture, the session actor spawns an external
     // ACP agent process, which requires different test infrastructure.
+
+    #[test]
+    fn test_chat_request_options_deserialization() {
+        // Test deserializing options from TypeScript format
+        let json = r#"{
+            "tools": [
+                {
+                    "name": "symposium-agent-action",
+                    "description": "Request permission for agent actions",
+                    "inputSchema": {"type": "object", "properties": {"action": {"type": "string"}}}
+                }
+            ],
+            "toolMode": "auto"
+        }"#;
+
+        let options: ChatRequestOptions = serde_json::from_str(json).unwrap();
+        assert_eq!(options.tools.len(), 1);
+        assert_eq!(options.tools[0].name, "symposium-agent-action");
+        assert_eq!(options.tool_mode, Some(ToolMode::Auto));
+    }
+
+    #[test]
+    fn test_chat_request_options_default() {
+        // Test that missing options deserialize to defaults
+        let json = r#"{}"#;
+        let options: ChatRequestOptions = serde_json::from_str(json).unwrap();
+        assert!(options.tools.is_empty());
+        assert_eq!(options.tool_mode, None);
+    }
 
     #[test]
     fn test_agent_definition_eliza_serialization() {

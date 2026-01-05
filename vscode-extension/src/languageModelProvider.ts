@@ -17,6 +17,30 @@ import {
 } from "./agentRegistry";
 
 /**
+ * Tool definition passed in request options.
+ * Matches VS Code's tool format in LanguageModelChatRequestOptions.
+ */
+interface ToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: object;
+}
+
+/**
+ * Tool mode enum matching VS Code's LanguageModelChatToolMode.
+ */
+type ToolMode = "auto" | "required";
+
+/**
+ * Options for chat requests.
+ * Matches VS Code's LanguageModelChatRequestOptions.
+ */
+interface ChatRequestOptions {
+  tools?: ToolDefinition[];
+  toolMode?: ToolMode;
+}
+
+/**
  * Content parts for messages and streaming responses.
  * Unified type matching VS Code's LanguageModel API naming.
  */
@@ -49,6 +73,7 @@ interface McpServerStdio {
  * The protocol supports both eliza and mcp_server variants, but the
  * extension always sends mcp_server (resolving builtins to the binary path).
  */
+// eslint-disable-next-line @typescript-eslint/naming-convention -- matches Rust serde naming
 type AgentDefinition = { mcp_server: McpServerStdio };
 
 /**
@@ -77,14 +102,8 @@ function resolvedCommandToAgentDefinition(
     ? Object.entries(resolved.env).map(([k, v]) => ({ name: k, value: v }))
     : [];
 
-  return {
-    mcp_server: {
-      name,
-      command,
-      args,
-      env: envArray,
-    },
-  };
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- matches Rust serde naming
+  return { mcp_server: { name, command, args, env: envArray } };
 }
 
 interface JsonRpcMessage {
@@ -373,7 +392,7 @@ export class SymposiumLanguageModelProvider
   async provideLanguageModelChatResponse(
     model: vscode.LanguageModelChatInformation,
     messages: readonly vscode.LanguageModelChatRequestMessage[],
-    _options: unknown,
+    options: vscode.ProvideLanguageModelChatResponseOptions,
     progress: vscode.Progress<vscode.LanguageModelTextPart>,
     token: vscode.CancellationToken,
   ): Promise<void> {
@@ -399,15 +418,30 @@ export class SymposiumLanguageModelProvider
       content: this.contentToArray(msg.content),
     }));
 
+    // Convert options to our format
+    const convertedOptions: ChatRequestOptions = {
+      tools: options.tools?.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema ?? {},
+      })),
+      toolMode: this.toolModeToString(options.toolMode),
+    };
+
     logger.debug(
       "lm-provider",
-      `provideLanguageModelChatResponse: agent=${agent.id}, messages=${JSON.stringify(convertedMessages)}`,
+      `provideLanguageModelChatResponse: agent=${agent.id}, tools=${convertedOptions.tools?.length ?? 0}`,
     );
 
     try {
       await this.sendRequest(
         "lm/provideLanguageModelChatResponse",
-        { modelId: model.id, messages: convertedMessages, agent: agentDef },
+        {
+          modelId: model.id,
+          messages: convertedMessages,
+          agent: agentDef,
+          options: convertedOptions,
+        },
         progress,
         token,
       );
@@ -420,6 +454,25 @@ export class SymposiumLanguageModelProvider
         throw new vscode.CancellationError();
       }
       throw err;
+    }
+  }
+
+  /**
+   * Convert tool mode enum to string
+   */
+  private toolModeToString(
+    mode: vscode.LanguageModelChatToolMode | undefined,
+  ): ToolMode | undefined {
+    if (mode === undefined) {
+      return undefined;
+    }
+    switch (mode) {
+      case vscode.LanguageModelChatToolMode.Auto:
+        return "auto";
+      case vscode.LanguageModelChatToolMode.Required:
+        return "required";
+      default:
+        return "auto";
     }
   }
 
@@ -498,6 +551,7 @@ export class SymposiumLanguageModelProvider
    * Known VS Code/Copilot internal message part mimeTypes that we ignore.
    * These are undocumented and not relevant to our use case.
    */
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- UPPER_SNAKE_CASE for constants
   private static readonly KNOWN_IGNORED_MIMETYPES = new Set([
     "cache_control", // Copilot cache hints (e.g., "ephemeral")
     "stateful_marker", // Copilot session tracking

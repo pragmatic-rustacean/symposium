@@ -12,7 +12,7 @@ use uuid::Uuid;
 use super::session_actor::{AgentDefinition, SessionActor};
 use super::{
     ContentPart, Message, ProvideResponseRequest, ProvideResponseResponse,
-    ResponseCompleteNotification, ResponsePartNotification, ROLE_ASSISTANT,
+    ResponseCompleteNotification, ResponsePartNotification, ROLE_ASSISTANT, SYMPOSIUM_AGENT_ACTION,
 };
 use sacp::JrConnectionCx;
 
@@ -118,6 +118,9 @@ struct SessionData {
     provisional_messages: Vec<Message>,
     /// Current streaming state
     streaming: Option<StreamingState>,
+    /// Whether the internal tool (symposium-agent-action) is available.
+    /// If false, all permission requests should be auto-denied.
+    has_internal_tool: bool,
 }
 
 /// State when actively streaming a response
@@ -143,13 +146,18 @@ struct HistoryMatch {
 }
 
 impl SessionData {
-    fn new(actor: SessionActor, agent_definition: AgentDefinition) -> Self {
+    fn new(
+        actor: SessionActor,
+        agent_definition: AgentDefinition,
+        has_internal_tool: bool,
+    ) -> Self {
         Self {
             actor,
             agent_definition,
             committed: Vec::new(),
             provisional_messages: Vec::new(),
             streaming: None,
+            has_internal_tool,
         }
     }
 
@@ -287,23 +295,37 @@ impl HistoryActor {
             .filter_map(|(i, s)| s.match_history(&request.messages).map(|m| (i, m)))
             .max_by_key(|(_, m)| !m.canceled); // prefer non-canceled matches
 
+        // Check if the internal tool is available in the request options
+        let has_internal_tool = request
+            .options
+            .tools
+            .iter()
+            .any(|t| t.name == SYMPOSIUM_AGENT_ACTION);
+
         let (session_idx, history_match) = if let Some((idx, history_match)) = best_match {
             tracing::debug!(
                 session_id = %self.sessions[idx].actor.session_id(),
                 canceled = history_match.canceled,
                 new_message_count = history_match.new_messages.len(),
+                has_internal_tool,
                 "matched existing session"
             );
+            // Update the tool availability (it can change between requests)
+            self.sessions[idx].has_internal_tool = has_internal_tool;
             (idx, history_match)
         } else {
             // No matching session - create a new one
             let actor = SessionActor::spawn(self.handle.clone(), request.agent.clone())?;
             tracing::debug!(
                 session_id = %actor.session_id(),
+                has_internal_tool,
                 "created new session"
             );
-            self.sessions
-                .push(SessionData::new(actor, request.agent.clone()));
+            self.sessions.push(SessionData::new(
+                actor,
+                request.agent.clone(),
+                has_internal_tool,
+            ));
             let history_match = HistoryMatch {
                 new_messages: request.messages.clone(),
                 canceled: false,
@@ -339,6 +361,7 @@ impl HistoryActor {
             history_match.new_messages,
             history_match.canceled,
             cancel_rx,
+            session_data.has_internal_tool,
         );
 
         Ok(())
