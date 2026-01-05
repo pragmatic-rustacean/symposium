@@ -58,7 +58,7 @@ impl RequestResponse {
         call_id: String,
         name: String,
         input: serde_json::Value,
-        actor_rx: Pin<&mut Peekable<mpsc::UnboundedReceiver<ModelRequest>>>,
+        mut actor_rx: Pin<&mut Peekable<mpsc::UnboundedReceiver<ModelRequest>>>,
     ) -> Result<SendToolUseResult, Canceled> {
         tracing::debug!(?call_id, ?name, ?input, "send_tool_use");
 
@@ -80,7 +80,7 @@ impl RequestResponse {
         drop(cancel_rx);
 
         // Wait for VSCode to respond. If the stream ends, just cancel.
-        let Some(peek_request) = actor_rx.peek().await else {
+        let Some(peek_request) = actor_rx.as_mut().peek().await else {
             return Err(Canceled);
         };
         tracing::debug!(?peek_request, "next request received");
@@ -126,7 +126,7 @@ fn validate_tool_response(
     };
 
     // Validate assistant message: role and content must match what we sent
-    if assistant_msg.role != "assistant" {
+    if assistant_msg.role != crate::vscodelm::ROLE_ASSISTANT {
         tracing::debug!("expected assistant message, got {:?}", assistant_msg.role);
         return None;
     }
@@ -141,7 +141,7 @@ fn validate_tool_response(
     }
 
     // Validate user message: must be user role with matching tool result
-    if user_msg.role != "user" {
+    if user_msg.role != crate::vscodelm::ROLE_USER {
         tracing::debug!("expected user message, got {:?}", user_msg.role);
         return None;
     }

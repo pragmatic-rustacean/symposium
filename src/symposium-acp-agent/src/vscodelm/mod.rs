@@ -3,19 +3,24 @@
 //! This module implements the Rust backend for the VS Code `LanguageModelChatProvider` API.
 //! It uses sacp's JSON-RPC infrastructure for communication with the TypeScript extension.
 
+mod history_actor;
 mod session_actor;
 
 use anyhow::Result;
+use history_actor::{HistoryActor, HistoryActorHandle};
 use sacp::{
     link::RemoteStyle, util::MatchMessage, Component, Handled, JrConnectionCx, JrLink,
-    JrMessageHandler, JrNotification, JrPeer, JrRequest, JrRequestCx, JrResponsePayload, MessageCx,
+    JrMessageHandler, JrNotification, JrPeer, JrRequest, JrResponsePayload, MessageCx,
 };
 use serde::{Deserialize, Serialize};
-use session_actor::SessionActor;
-use std::{path::PathBuf, pin::pin};
+use std::path::PathBuf;
 
 /// Name of the special tool we inject into vscode for requesting permission
 const SYMPOSIUM_AGENT_ACTION: &str = "symposium-agent-action";
+
+/// Role constants for message matching
+pub(crate) const ROLE_USER: &str = "user";
+pub(crate) const ROLE_ASSISTANT: &str = "assistant";
 
 // ============================================================================
 // Peers
@@ -242,253 +247,39 @@ pub struct ProvideTokenCountResponse {
 // Message Handler
 // ============================================================================
 
-use futures::{channel::oneshot, stream};
-
-use crate::vscodelm::session_actor::{ActivePrompt, SessionToCodeMessage};
-
-/// A session with its current state.
-struct SessionData {
-    actor: SessionActor,
-    state: SessionState,
-}
-
-/// State of a session from the handler's perspective.
-enum SessionState {
-    /// Session is idle, waiting for a prompt.
-    Idle,
-
-    /// Session is streaming a response.
-    Streaming {
-        /// The JSON-RPC request ID of the in-flight request.
-        request_id: serde_json::Value,
-        /// Send on this channel to cancel the streaming response.
-        cancel_tx: oneshot::Sender<()>,
-    },
-
-    /// Session is awaiting permission decision from VS Code.
-    AwaitingPermission {
-        /// The tool call ID we emitted to VS Code for the permission request.
-        tool_call_id: String,
-
-        /// Where the decision should be sent (send a `()` if approved, drop otherwise)
-        decision_tx: oneshot::Sender<()>,
-    },
-}
-
-impl SessionState {
-    /// Cancel any in-progress streaming and transition to Idle.
-    /// No-op if already Idle or AwaitingPermission.
-    fn cancel(&mut self) {
-        let old_state = std::mem::replace(self, SessionState::Idle);
-        if let SessionState::Streaming { cancel_tx, .. } = old_state {
-            // Ignore send error - receiver may already be gone
-            let _ = cancel_tx.send(());
-        }
-        // AwaitingPermission doesn't need special cleanup - the actor handles it
-    }
-}
-
-impl SessionData {
-    /// Check if incoming messages extend this session's history.
-    fn prefix_match_len(&self, messages: &[Message]) -> Option<usize> {
-        self.actor.prefix_match_len(messages)
-    }
-
-    /// Returns true if this session is streaming with the given request ID.
-    fn is_streaming_request(&self, request_id: &serde_json::Value) -> bool {
-        matches!(&self.state, SessionState::Streaming { request_id: rid, .. } if rid == request_id)
-    }
-
-    /// Check if the session is awaiting permission and the messages contain approval.
-    ///
-    /// Returns Some(true) if approved (tool result present), Some(false) if rejected
-    /// (no tool call/result in messages), None if not awaiting permission.
-    fn check_permission_in_messages(&self, messages: &[Message]) -> Option<bool> {
-        let tool_call_id = self.state.awaiting_permission_for()?;
-
-        // Look for the tool call and result in messages
-        // If we find both the tool call we emitted AND a corresponding result,
-        // VS Code approved the action
-        let has_tool_call = messages.iter().any(|m| m.has_tool_call(tool_call_id));
-        let has_tool_result = messages.iter().any(|m| m.has_tool_result(tool_call_id));
-
-        if has_tool_call && has_tool_result {
-            Some(true) // Approved
-        } else {
-            Some(false) // Rejected (no matching tool call/result)
-        }
-    }
-
-    fn receive_messages(
-        &mut self,
-        request_id: &serde_json::Value,
-        new_messages: &[Message],
-        request_cx: JrRequestCx<ProvideResponseResponse>,
-        cx: &JrConnectionCx<LmBackendToVsCode>,
-    ) -> Result<(), sacp::Error> {
-        match self.state {
-            SessionState::Idle => {
-                self.receive_messages_when_idle(request_id, new_messages, request_cx, cx)
-            }
-            SessionState::Streaming {
-                request_id,
-                cancel_tx,
-            } => todo!(),
-            SessionState::AwaitingPermission {
-                tool_call_id,
-                decision_tx,
-            } => todo!(),
-        }
-    }
-
-    /// Receive messages when in the idle state.
-    fn receive_messages_when_idle(
-        &mut self,
-        request_id: &serde_json::Value,
-        new_messages: &[Message],
-        request_cx: JrRequestCx<ProvideResponseResponse>,
-        cx: &JrConnectionCx<LmBackendToVsCode>,
-    ) -> Result<(), sacp::Error> {
-        let state = std::mem::replace(&mut self.state, SessionState::Idle);
-        assert!(matches!(state, SessionState::Idle));
-
-        // Create cancellation channel
-        let (cancel_tx, cancel_rx) = oneshot::channel();
-
-        // Send prompt to actor
-        let active_prompt = self.actor.send_prompt(new_messages.to_vec())?;
-
-        // Transition to Streaming state
-        self.state = SessionState::Streaming {
-            request_id: request_id.clone(),
-            cancel_tx,
-        };
-
-        // Spawn task to stream response (non-blocking)
-        let cx = cx.clone();
-        let request_id = request_id.clone();
-        cx.clone().spawn(async move {
-            stream_response(cx, request_id, request_cx, active_prompt, cancel_rx)
-                .await
-                .map(|_| ())
-        })?;
-
-        Ok(())
-    }
-}
-
-/// Handler for LM backend messages
+/// Handler for LM backend messages.
+/// Forwards requests to HistoryActor for actual processing.
 pub struct LmBackendHandler {
-    /// Active sessions, searched linearly for prefix matches
-    sessions: Vec<SessionData>,
+    /// Handle to send messages to the HistoryActor.
+    /// Created lazily on first request that needs it.
+    history_handle: Option<HistoryActorHandle>,
 }
 
 impl LmBackendHandler {
     pub fn new() -> Self {
         Self {
-            sessions: Vec::new(),
-        }
-    }
-}
-
-/// JSON-RPC error code for request cancellation.
-/// Using -32800 which is in the server error range (-32000 to -32099 reserved for implementation).
-const ERROR_CODE_CANCELLED: i32 = -32800;
-
-/// How a streaming response ended.
-#[derive(Debug)]
-pub enum StreamEndReason {
-    /// Stream completed normally (agent finished its turn).
-    Complete,
-    /// Stream was cancelled by the client.
-    Cancelled,
-    /// Stream paused awaiting permission decision.
-    AwaitingPermission { tool_call_id: String },
-}
-
-/// Stream response parts from the session actor, with cancellation support.
-///
-/// Merges the response part stream with a cancellation signal stream.
-/// On normal completion, sends `lm/responseComplete` and responds to the request.
-/// On cancellation, responds with a cancellation error.
-/// On awaiting permission, responds successfully (VS Code will send another request).
-///
-/// Returns the reason the stream ended, which can be used to update session state.
-async fn stream_response(
-    cx: JrConnectionCx<LmBackendToVsCode>,
-    request_id: serde_json::Value,
-    request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
-    mut active_prompt: ActivePrompt,
-    cancel_rx: oneshot::Receiver<()>,
-) -> Result<StreamEndReason, sacp::Error> {
-    use futures::StreamExt;
-    use futures_concurrency::stream::Merge;
-
-    enum Event {
-        SessionToCode(SessionToCodeMessage),
-        StreamEnded,
-        Cancelled,
-    }
-
-    // Convert response stream to events, with StreamEnded when it closes
-    let part_stream = active_prompt
-        .prompt_rx()
-        .by_ref()
-        .map(Event::SessionToCode)
-        .chain(stream::once(async { Event::StreamEnded }));
-
-    // Convert cancel oneshot to a single-item stream
-    let cancel_stream = stream::once(cancel_rx).map(|_| Event::Cancelled);
-
-    // Merge both streams and pin for iteration
-    let mut events = pin!((part_stream, cancel_stream).merge());
-
-    while let Some(event) = events.next().await {
-        match event {
-            Event::SessionToCode(SessionToCodeMessage::Part(part)) => {
-                cx.send_notification(ResponsePartNotification {
-                    request_id: request_id.clone(),
-                    part,
-                })?;
-            }
-            Event::SessionToCode(SessionToCodeMessage::PermissionRequest {
-                tool_call_id,
-                kind,
-                title,
-                locations,
-                raw_input,
-                decision_tx,
-            }) => {
-                // Stream is pausing for permission - respond successfully
-                // VS Code will send another request with the tool result if approved
-                tracing::debug!(?request_id, %tool_call_id, "stream pausing for permission");
-                cx.send_notification(ResponseCompleteNotification {
-                    request_id: request_id.clone(),
-                })?;
-                request_cx.respond(ProvideResponseResponse {})?;
-                return Ok(StreamEndReason::AwaitingPermission { tool_call_id });
-            }
-            Event::StreamEnded => {
-                // Stream complete - send completion notification and respond
-                cx.send_notification(ResponseCompleteNotification {
-                    request_id: request_id.clone(),
-                })?;
-                request_cx.respond(ProvideResponseResponse {})?;
-                return Ok(StreamEndReason::Complete);
-            }
-            Event::Cancelled => {
-                // Cancelled - respond with error
-                tracing::debug!(?request_id, "streaming cancelled");
-                request_cx.respond_with_error(sacp::Error::new(
-                    ERROR_CODE_CANCELLED,
-                    "Request cancelled",
-                ))?;
-                return Ok(StreamEndReason::Cancelled);
-            }
+            history_handle: None,
         }
     }
 
-    Ok(StreamEndReason::Complete)
+    /// Get or create the history actor handle.
+    /// The actor is created lazily on first use, using the provided connection context.
+    fn get_or_create_history_handle(
+        &mut self,
+        cx: &JrConnectionCx<LmBackendToVsCode>,
+    ) -> &HistoryActorHandle {
+        if self.history_handle.is_none() {
+            let (actor, handle) = HistoryActor::new(cx.clone());
+            // Spawn the actor to run in the background
+            tokio::spawn(async move {
+                if let Err(e) = actor.run().await {
+                    tracing::error!(?e, "HistoryActor error");
+                }
+            });
+            self.history_handle = Some(handle);
+        }
+        self.history_handle.as_ref().unwrap()
+    }
 }
 
 impl JrMessageHandler for LmBackendHandler {
@@ -504,6 +295,10 @@ impl JrMessageHandler for LmBackendHandler {
         cx: JrConnectionCx<Self::Link>,
     ) -> Result<Handled<MessageCx>, sacp::Error> {
         tracing::trace!(?message, "handle_message");
+
+        // Get or create the history actor handle (lazy init on first call)
+        let history_handle = self.get_or_create_history_handle(&cx).clone();
+
         MatchMessage::new(message)
             .if_request(async |_req: ProvideInfoRequest, request_cx| {
                 let response = ProvideInfoResponse {
@@ -529,67 +324,19 @@ impl JrMessageHandler for LmBackendHandler {
             .if_request(async |req: ProvideResponseRequest, request_cx| {
                 tracing::debug!(?req, "ProvideResponseRequest");
 
-                // Get the request ID from the request context for notifications
                 let request_id = request_cx.id().clone();
 
-                // Find session with longest matching prefix
-                let (session_idx, prefix_len) = self
-                    .sessions
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, s)| s.prefix_match_len(&req.messages).map(|len| (i, len)))
-                    .max_by_key(|(_, len)| *len)
-                    .unwrap_or((usize::MAX, 0));
+                // Forward to HistoryActor for processing
+                history_handle.send_from_vscode(req, request_id, request_cx);
 
-                // Get or create session
-                let session_data = if session_idx < self.sessions.len() {
-                    let session_data = &mut self.sessions[session_idx];
-                    tracing::debug!(
-                        session_id = %session_data.actor.session_id(),
-                        prefix_len,
-                        "continuing existing session"
-                    );
-                    session_data
-                } else {
-                    let actor = SessionActor::spawn(&cx, req.agent.clone())?;
-                    self.sessions.push(SessionData {
-                        actor,
-                        state: SessionState::Idle,
-                    });
-                    self.sessions.last_mut().unwrap()
-                };
-
-                // Compute new messages (everything after the matched prefix)
-                let new_messages = &req.messages[prefix_len..];
-                tracing::debug!(
-                    session_id = %session_data.actor.session_id(),
-                    new_message_count = new_messages.len(),
-                    "sending new messages to session"
-                );
-
-                session_data.receive_messages(&new_messages)
+                Ok(())
             })
             .await
             .if_notification(async |notification: CancelNotification| {
                 tracing::debug!(?notification, "CancelNotification");
 
-                // Find the session streaming this request
-                if let Some(session_data) = self
-                    .sessions
-                    .iter_mut()
-                    .find(|s| s.is_streaming_request(&notification.request_id))
-                {
-                    session_data.state.cancel();
-                    tracing::debug!(
-                        session_id = %session_data.actor.session_id(),
-                        "cancelled streaming response"
-                    );
-                } else {
-                    tracing::warn!(
-                        request_id = ?notification.request_id,
-                        "cancel notification for unknown request"
-                    );
-                }
+                // Forward to HistoryActor
+                history_handle.send_cancel_from_vscode(notification.request_id);
 
                 Ok(())
             })
