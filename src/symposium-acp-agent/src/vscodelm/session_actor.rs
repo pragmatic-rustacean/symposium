@@ -373,16 +373,15 @@ impl SessionActor {
                     Canceled,
                 }
 
-                let event = (
+                let event = Race::race((
                     async { Event::AgentUpdate(session.read_update().await) },
                     async { Event::ToolInvocation(invocation_rx.next().await) },
                     async {
                         let _ = (&mut request_state.cancel_rx).await;
                         Event::Canceled
                     },
-                )
-                    .race()
-                    .await;
+                ))
+                .await;
 
                 match event {
                     Event::AgentUpdate(result) => {
@@ -659,16 +658,20 @@ impl SessionActor {
         mut request_state: RequestState,
         session_id: Uuid,
     ) -> Result<RequestState, Canceled> {
+        let ToolInvocation {
+            name,
+            arguments,
+            result_tx,
+        } = invocation;
+
         // Generate a unique tool call ID for this invocation
         let tool_call_id = Uuid::new_v4().to_string();
 
         // Build the ToolCall part to send to VS Code
         let tool_call = ContentPart::ToolCall {
             tool_call_id: tool_call_id.clone(),
-            tool_name: invocation.name.clone(),
-            parameters: invocation
-                .arguments
-                .clone()
+            tool_name: name,
+            parameters: arguments
                 .map(serde_json::Value::Object)
                 .unwrap_or(serde_json::Value::Null),
         };
@@ -678,10 +681,10 @@ impl SessionActor {
             .send_from_session(session_id, SessionToHistoryMessage::Part(tool_call))
             .is_err()
         {
-            let _ = invocation
-                .result_tx
-                .send(Err("failed to send tool call".to_string()));
-            return Err(Canceled);
+            return Err(cancel_tool_invocation(
+                result_tx,
+                "failed to send tool call",
+            ));
         }
 
         // Signal completion so VS Code invokes the tool
@@ -689,10 +692,7 @@ impl SessionActor {
             .send_from_session(session_id, SessionToHistoryMessage::Complete)
             .is_err()
         {
-            let _ = invocation
-                .result_tx
-                .send(Err("failed to send complete".to_string()));
-            return Err(Canceled);
+            return Err(cancel_tool_invocation(result_tx, "failed to send complete"));
         }
 
         // Wait for the next request (which should have the tool result), racing against cancellation
@@ -702,7 +702,7 @@ impl SessionActor {
             ChannelClosed,
         }
 
-        let peek_result = (
+        let peek_result = Race::race((
             async {
                 match Pin::new(&mut *request_rx).peek().await {
                     Some(req) => PeekResult::Request(req),
@@ -713,32 +713,31 @@ impl SessionActor {
                 let _ = (&mut request_state.cancel_rx).await;
                 PeekResult::Canceled
             },
-        )
-            .race()
-            .await;
+        ))
+        .await;
 
         let next_request = match peek_result {
             PeekResult::Request(req) => req,
             PeekResult::Canceled => {
-                let _ = invocation
-                    .result_tx
-                    .send(Err("tool invocation canceled".to_string()));
-                return Err(Canceled);
+                return Err(cancel_tool_invocation(
+                    result_tx,
+                    "tool invocation canceled",
+                ));
             }
             PeekResult::ChannelClosed => {
-                let _ = invocation.result_tx.send(Err(
-                    "channel closed while waiting for tool result".to_string(),
+                return Err(cancel_tool_invocation(
+                    result_tx,
+                    "channel closed while waiting for tool result",
                 ));
-                return Err(Canceled);
             }
         };
 
         // Check if canceled (history mismatch)
         if next_request.canceled {
-            let _ = invocation
-                .result_tx
-                .send(Err("tool invocation canceled".to_string()));
-            return Err(Canceled);
+            return Err(cancel_tool_invocation(
+                result_tx,
+                "tool invocation canceled",
+            ));
         }
 
         // Find the tool result in the response
@@ -761,10 +760,10 @@ impl SessionActor {
         });
 
         let Some(tool_result) = tool_result else {
-            let _ = invocation
-                .result_tx
-                .send(Err("no tool result found in response".to_string()));
-            return Err(Canceled);
+            return Err(cancel_tool_invocation(
+                result_tx,
+                "no tool result found in response",
+            ));
         };
 
         // Consume the request and get the new state
@@ -780,8 +779,8 @@ impl SessionActor {
         let call_result =
             rmcp::model::CallToolResult::success(vec![rmcp::model::Content::text(result_text)]);
 
-        // Send result back to the MCP server
-        let _ = invocation.result_tx.send(Ok(call_result));
+        // Send success result back to the MCP server
+        let _ = result_tx.send(Ok(call_result));
 
         Ok(state)
     }
@@ -790,6 +789,15 @@ impl SessionActor {
 /// Marker type indicating a tool invocation or request was canceled.
 #[derive(Debug)]
 struct Canceled;
+
+/// Send an error to the tool invocation result channel and return Canceled.
+fn cancel_tool_invocation(
+    result_tx: oneshot::Sender<Result<rmcp::model::CallToolResult, String>>,
+    err: impl ToString,
+) -> Canceled {
+    let _ = result_tx.send(Err(err.to_string()));
+    Canceled
+}
 
 /// Convert a content block to a string representation
 fn content_block_to_string(block: &sacp::schema::ContentBlock) -> String {
