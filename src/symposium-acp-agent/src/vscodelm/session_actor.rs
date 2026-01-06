@@ -422,22 +422,18 @@ impl SessionActor {
             // Read updates from the agent, also handling VS Code tool invocations
             let canceled = loop {
                 // Race between agent update, tool invocation, and cancellation
-                #[derive(Debug)]
                 enum Event {
                     AgentUpdate(Result<sacp::SessionMessage, sacp::Error>),
                     ToolInvocation(Option<ToolInvocation>),
                     Canceled,
                 }
 
-                tracing::trace!(%session_id, "racing for next event");
                 let event = Race::race((
                     async { Event::AgentUpdate(session.read_update().await) },
                     async { Event::ToolInvocation(invocation_rx.next().await) },
                     request_state.on_cancel(Event::Canceled),
                 ))
                 .await;
-
-                tracing::trace!(%session_id, ?event, "race completed");
 
                 match event {
                     Event::AgentUpdate(result) => {
@@ -492,10 +488,7 @@ impl SessionActor {
                         )
                         .await
                         {
-                            Ok(new_state) => {
-                                tracing::trace!(%session_id, "tool invocation handled, continuing loop");
-                                request_state = new_state;
-                            }
+                            Ok(new_state) => request_state = new_state,
                             Err(Canceled) => break true,
                         }
                     }
@@ -505,8 +498,6 @@ impl SessionActor {
                     }
                 }
             };
-
-            tracing::trace!(%session_id, %canceled, "exited event loop");
 
             if canceled {
                 cx.send_notification(sacp::schema::CancelNotification::new(
@@ -716,7 +707,7 @@ impl SessionActor {
         invocation: ToolInvocation,
         history_handle: &HistoryActorHandle,
         request_rx: &mut Peekable<mpsc::UnboundedReceiver<SessionRequest>>,
-        _request_state: RequestState,
+        mut request_state: RequestState,
         session_id: Uuid,
     ) -> Result<RequestState, Canceled> {
         let ToolInvocation {
@@ -756,20 +747,33 @@ impl SessionActor {
             return Err(cancel_tool_invocation(result_tx, "failed to send complete"));
         }
 
-        // Wait for the next request (which should have the tool result).
-        //
-        // Note: We don't race against cancellation here because we just sent Complete,
-        // which causes the history actor to drop the old cancel_tx. The old cancel_rx
-        // will fire immediately, but that's not a real cancellation - it's just the
-        // old request ending. The new request will have its own cancel_rx.
-        tracing::trace!(%session_id, "waiting for tool result request");
-        let next_request = match Pin::new(&mut *request_rx).peek().await {
-            Some(req) => {
-                tracing::trace!(%session_id, "got tool result request");
-                req
+        // Wait for the next request (which should have the tool result), racing against cancellation
+        enum PeekResult<'a> {
+            Request(&'a SessionRequest),
+            Canceled,
+            ChannelClosed,
+        }
+
+        let peek_result = Race::race((
+            async {
+                match Pin::new(&mut *request_rx).peek().await {
+                    Some(req) => PeekResult::Request(req),
+                    None => PeekResult::ChannelClosed,
+                }
+            },
+            request_state.on_cancel(PeekResult::Canceled),
+        ))
+        .await;
+
+        let next_request = match peek_result {
+            PeekResult::Request(req) => req,
+            PeekResult::Canceled => {
+                return Err(cancel_tool_invocation(
+                    result_tx,
+                    "tool invocation canceled",
+                ));
             }
-            None => {
-                tracing::trace!(%session_id, "channel closed while waiting for tool result");
+            PeekResult::ChannelClosed => {
                 return Err(cancel_tool_invocation(
                     result_tx,
                     "channel closed while waiting for tool result",
