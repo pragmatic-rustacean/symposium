@@ -319,7 +319,10 @@ impl HistoryActor {
         request_id: serde_json::Value,
         request_cx: sacp::JrRequestCx<ProvideResponseResponse>,
     ) -> Result<(), sacp::Error> {
-        tracing::debug!(?request, "HistoryActor: received VS Code request");
+        tracing::debug!(
+            message_count = request.messages.len(),
+            "received VS Code request"
+        );
 
         // Normalize incoming messages to coalesce consecutive text parts.
         // This ensures consistent comparison with our provisional history.

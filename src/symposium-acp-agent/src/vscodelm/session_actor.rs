@@ -747,38 +747,18 @@ impl SessionActor {
             return Err(cancel_tool_invocation(result_tx, "failed to send complete"));
         }
 
-        // Wait for the next request (which should have the tool result), racing against cancellation
-        enum PeekResult<'a> {
-            Request(&'a SessionRequest),
-            Canceled,
-            ChannelClosed,
-        }
-
-        let peek_result = Race::race((
-            async {
-                match Pin::new(&mut *request_rx).peek().await {
-                    Some(req) => PeekResult::Request(req),
-                    None => PeekResult::ChannelClosed,
-                }
-            },
-            request_state.on_cancel(PeekResult::Canceled),
-        ))
-        .await;
-
-        let next_request = match peek_result {
-            PeekResult::Request(req) => req,
-            PeekResult::Canceled => {
-                return Err(cancel_tool_invocation(
-                    result_tx,
-                    "tool invocation canceled",
-                ));
-            }
-            PeekResult::ChannelClosed => {
-                return Err(cancel_tool_invocation(
-                    result_tx,
-                    "channel closed while waiting for tool result",
-                ));
-            }
+        // Wait for the next request (which should have the tool result).
+        //
+        // Note: We don't race against cancel_rx here because sending Complete above
+        // causes the history actor to drop the streaming state (including cancel_tx).
+        // When cancel_tx is dropped, cancel_rx resolves - but that's not a real
+        // cancellation. Real cancellation is detected via next_request.canceled below,
+        // which is set when VS Code sends a request with mismatched history.
+        let Some(next_request) = Pin::new(&mut *request_rx).peek().await else {
+            return Err(cancel_tool_invocation(
+                result_tx,
+                "channel closed while waiting for tool result",
+            ));
         };
 
         // Check if canceled (history mismatch)
@@ -790,6 +770,11 @@ impl SessionActor {
         }
 
         // Find the tool result in the response
+        tracing::trace!(
+            %tool_call_id,
+            message_count = next_request.messages.len(),
+            "looking for tool result"
+        );
         let tool_result = next_request.messages.iter().find_map(|msg| {
             msg.content.iter().find_map(|part| {
                 if let ContentPart::ToolResult {
@@ -797,7 +782,9 @@ impl SessionActor {
                     result,
                 } = part
                 {
-                    if id == &tool_call_id {
+                    let matches = id == &tool_call_id;
+                    tracing::trace!(result_id = %id, %matches, "found ToolResult");
+                    if matches {
                         Some(result.clone())
                     } else {
                         None
