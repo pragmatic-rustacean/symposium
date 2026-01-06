@@ -260,14 +260,27 @@ impl ServerHandler for VscodeToolsMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         tracing::debug!(tool_name = %request.name, ?request.arguments, "call_tool called");
 
+        // Claude Code prefixes MCP tool names with `mcp__<server>__<tool>`.
+        // Strip the prefix to get the original VS Code tool name.
+        let tool_name = request
+            .name
+            .strip_prefix(VSCODE_TOOLS_PREFIX)
+            .unwrap_or(&request.name);
+
+        tracing::debug!(
+            original_name = %request.name,
+            resolved_name = %tool_name,
+            "resolved tool name"
+        );
+
         // Check if tool exists
         {
             let state = self.state.read().await;
-            if !state.tools.iter().any(|t| t.name == request.name.as_ref()) {
-                tracing::warn!(tool_name = %request.name, "tool not found");
+            if !state.tools.iter().any(|t| t.name == tool_name) {
+                tracing::warn!(tool_name = %tool_name, "tool not found");
                 return Err(ErrorData::new(
                     ErrorCode::INVALID_PARAMS,
-                    format!("tool '{}' not found", request.name),
+                    format!("tool '{}' not found", tool_name),
                     None,
                 ));
             }
@@ -278,7 +291,7 @@ impl ServerHandler for VscodeToolsMcpServer {
 
         // Send invocation to session actor
         let invocation = ToolInvocation {
-            name: request.name.to_string(),
+            name: tool_name.to_string(),
             arguments: request.arguments,
             result_tx,
         };
