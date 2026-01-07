@@ -5,10 +5,23 @@ import {
   DEFAULT_AGENT_ID,
 } from "./agentRegistry";
 
+/** Extension configuration */
+export interface ExtensionConfig {
+  id: string;
+  enabled: boolean;
+}
+
+/** Default extensions when none configured */
+const DEFAULT_EXTENSIONS: ExtensionConfig[] = [
+  { id: "sparkle", enabled: true },
+  { id: "ferris", enabled: true },
+  { id: "cargo", enabled: true },
+];
+
 /**
  * AgentConfiguration - Identifies a unique agent setup
  *
- * Consists of the agent ID and workspace folder.
+ * Consists of the agent ID, workspace folder, and enabled extensions.
  * Tabs with the same configuration can share an ACP agent process.
  */
 
@@ -16,13 +29,19 @@ export class AgentConfiguration {
   constructor(
     public readonly agentId: string,
     public readonly workspaceFolder: vscode.WorkspaceFolder,
+    public readonly extensions: ExtensionConfig[],
   ) {}
 
   /**
-   * Get a unique key for this configuration
+   * Get a unique key for this configuration.
+   * Includes enabled extensions so different extension configs get different agents.
    */
   key(): string {
-    return `${this.agentId}:${this.workspaceFolder.uri.fsPath}`;
+    const enabledExtensions = this.extensions
+      .filter((e) => e.enabled)
+      .map((e) => e.id)
+      .join(",");
+    return `${this.agentId}:${this.workspaceFolder.uri.fsPath}:${enabledExtensions}`;
   }
 
   /**
@@ -50,6 +69,13 @@ export class AgentConfiguration {
     // Get current agent ID
     const currentAgentId = getCurrentAgentId();
 
+    // Get extensions configuration
+    const config = vscode.workspace.getConfiguration("symposium");
+    const extensions = config.get<ExtensionConfig[]>(
+      "extensions",
+      DEFAULT_EXTENSIONS,
+    );
+
     // Determine workspace folder
     let folder = workspaceFolder;
     if (!folder) {
@@ -70,6 +96,6 @@ export class AgentConfiguration {
       }
     }
 
-    return new AgentConfiguration(currentAgentId, folder);
+    return new AgentConfiguration(currentAgentId, folder, extensions);
   }
 }

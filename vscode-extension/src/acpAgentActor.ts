@@ -249,16 +249,8 @@ export class AcpAgentActor {
       spawnArgs.push("--trace-dir", traceDir);
     }
 
-    // Add extension proxies from settings
-    const extensions = vsConfig.get<Array<{ id: string; enabled: boolean }>>(
-      "extensions",
-      [
-        { id: "sparkle", enabled: true },
-        { id: "ferris", enabled: true },
-        { id: "cargo", enabled: true },
-      ],
-    );
-    for (const ext of extensions) {
+    // Add extension proxies from configuration
+    for (const ext of config.extensions) {
       if (ext.enabled) {
         spawnArgs.push("--proxy", ext.id);
       }
