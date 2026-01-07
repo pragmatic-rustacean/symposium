@@ -99,11 +99,55 @@ export function getBuiltInExtension(id: string): ExtensionConfig | undefined {
 }
 
 /**
- * Get extensions from user settings
+ * Old format for migration
+ */
+interface OldExtensionFormat {
+  id: string;
+  enabled?: boolean;
+  _enabled?: boolean;
+  _source?: ExtensionSource;
+  name?: string;
+  description?: string;
+  distribution?: Distribution;
+}
+
+/**
+ * Get extensions from user settings, migrating old format if needed
  */
 export function getExtensionsFromSettings(): ExtensionSettingsEntry[] {
   const config = vscode.workspace.getConfiguration("symposium");
-  return config.get<ExtensionSettingsEntry[]>("extensions", DEFAULT_EXTENSIONS);
+  const raw = config.get<OldExtensionFormat[]>("extensions");
+
+  // If no setting exists, return defaults
+  if (!raw || raw.length === 0) {
+    return DEFAULT_EXTENSIONS;
+  }
+
+  // Migrate old format to new format
+  return raw.map((ext): ExtensionSettingsEntry => {
+    // Determine enabled state: prefer _enabled, fall back to enabled, default true
+    const isEnabled = ext._enabled ?? ext.enabled ?? true;
+
+    // Determine source
+    let source: ExtensionSource = ext._source ?? "custom";
+    if (!ext._source && BUILT_IN_EXTENSION_IDS.has(ext.id)) {
+      source = "built-in";
+    }
+
+    // Build clean entry without old 'enabled' field
+    const entry: ExtensionSettingsEntry = {
+      id: ext.id,
+      _enabled: isEnabled,
+      _source: source,
+    };
+
+    // Copy optional fields for custom extensions
+    if (ext.name) entry.name = ext.name;
+    if (ext.description) entry.description = ext.description;
+    if (ext.distribution) entry.distribution = ext.distribution;
+
+    return entry;
+  });
 }
 
 /**
