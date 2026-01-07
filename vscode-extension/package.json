@@ -209,6 +209,11 @@
           },
           "default": [],
           "description": "List of agent IDs that automatically approve all tool execution requests."
+        },
+        "symposium.enableExperimentalLM": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable experimental Language Model provider integration. This allows other VS Code extensions to use Symposium agents via the Language Model API. Requires restart."
         }
       }
     },
