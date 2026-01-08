@@ -47,6 +47,7 @@ use sacp::Component;
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 
+mod config;
 mod symposium;
 pub mod vscodelm;
 
@@ -86,6 +87,21 @@ enum Command {
         /// Enable trace logging to the specified directory
         #[arg(long)]
         trace_dir: Option<PathBuf>,
+    },
+
+    /// Run using configuration from ~/.symposium/config.jsonc
+    ///
+    /// If no configuration file exists, runs an interactive setup wizard
+    /// to help create one.
+    ActAsConfigured {
+        /// Enable trace logging to the specified directory
+        #[arg(long)]
+        trace_dir: Option<PathBuf>,
+
+        /// Enable logging to stderr. Accepts a level (error, warn, info, debug, trace)
+        /// or a RUST_LOG-style filter string.
+        #[arg(long)]
+        log: Option<String>,
     },
 }
 
@@ -204,6 +220,48 @@ async fn main() -> Result<()> {
         Command::Vscodelm { trace_dir } => {
             // Run as VS Code Language Model Provider backend
             vscodelm::serve_stdio(trace_dir).await?;
+        }
+
+        Command::ActAsConfigured { trace_dir, log } => {
+            // Set up logging if requested
+            if let Some(filter) = &log {
+                use tracing_subscriber::EnvFilter;
+                tracing_subscriber::fmt()
+                    .with_env_filter(EnvFilter::new(filter))
+                    .with_writer(std::io::stderr)
+                    .init();
+            }
+
+            match config::SymposiumUserConfig::load()? {
+                Some(user_config) => {
+                    // Run with the loaded configuration
+                    let proxy_names = user_config.enabled_proxies();
+                    let agent_args = user_config.agent_args()?;
+
+                    let mut config = SymposiumConfig::from_proxy_names(proxy_names);
+                    if let Some(trace_dir) = trace_dir {
+                        config = config.trace_dir(trace_dir);
+                    }
+
+                    let agent = AcpAgent::from_args(&agent_args)?;
+
+                    tracing::debug!(
+                        "Starting in configured mode with agent: {:?}",
+                        agent.server()
+                    );
+
+                    Symposium::new(config)
+                        .with_agent(agent)
+                        .serve(sacp_tokio::Stdio::new())
+                        .await?;
+                }
+                None => {
+                    // No config - run configuration agent
+                    config::ConfigurationAgent::new()
+                        .serve(sacp_tokio::Stdio::new())
+                        .await?;
+                }
+            }
         }
     }
 

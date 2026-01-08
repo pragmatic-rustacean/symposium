@@ -3332,6 +3332,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_jsonc"
+version = "1.0.108"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a58154381df481a41b7536101c0daccdaf2426f244334074c4c77b89b6253a7"
+dependencies = [
+ "itoa",
+ "ryu",
+ "serde",
+]
+
+[[package]]
 name = "serde_path_to_error"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3615,6 +3626,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "dirs",
  "elizacp",
  "expect-test",
  "futures",
@@ -3627,6 +3639,8 @@ dependencies = [
  "sacp-tokio",
  "serde",
  "serde_json",
+ "serde_jsonc",
+ "shell-words",
  "sparkle-mcp",
  "symposium-cargo",
  "symposium-ferris",

@@ -39,6 +39,11 @@ uuid = { workspace = true, features = ["v4"] }
 futures-concurrency = "7"
 futures = "0.3"
 
+# Configuration
+serde_jsonc = "1"
+shell-words = "1"
+dirs = "5"
+
 [[example]]
 name = "vscodelm_cli"
 path = "examples/vscodelm_cli.rs"

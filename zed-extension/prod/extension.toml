@@ -6,122 +6,31 @@ authors = ["Niko Matsakis <niko@alum.mit.edu>"]
 description = "AI the Rust way - enriches AI agents with Rust-focused tools (Sparkle, Ferris, Cargo)"
 repository = "https://github.com/symposium-dev/symposium"
 
-# Claude Code
-[agent_servers.symposium-claude-code]
-name = "Symposium (Claude Code)"
+[agent_servers.symposium]
+name = "Symposium"
 icon = "./icons/symposium.svg"
 
-[agent_servers.symposium-claude-code.targets.darwin-aarch64]
+[agent_servers.symposium.targets.darwin-aarch64]
 archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-arm64.tar.gz"
 cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "@zed-industries/claude-code-acp"]
+args = ["act-as-configured"]
 
-[agent_servers.symposium-claude-code.targets.darwin-x86_64]
+[agent_servers.symposium.targets.darwin-x86_64]
 archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-x64.tar.gz"
 cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "@zed-industries/claude-code-acp"]
+args = ["act-as-configured"]
 
-[agent_servers.symposium-claude-code.targets.linux-x86_64]
+[agent_servers.symposium.targets.linux-x86_64]
 archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-x64.tar.gz"
 cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "@zed-industries/claude-code-acp"]
+args = ["act-as-configured"]
 
-[agent_servers.symposium-claude-code.targets.linux-aarch64]
+[agent_servers.symposium.targets.linux-aarch64]
 archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-arm64.tar.gz"
 cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "@zed-industries/claude-code-acp"]
+args = ["act-as-configured"]
 
-[agent_servers.symposium-claude-code.targets.windows-x86_64]
+[agent_servers.symposium.targets.windows-x86_64]
 archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-windows-x64.zip"
 cmd = "./symposium-acp-agent.exe"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "@zed-industries/claude-code-acp"]
-
-# Codex
-[agent_servers.symposium-codex]
-name = "Symposium (Codex)"
-icon = "./icons/symposium.svg"
-
-[agent_servers.symposium-codex.targets.darwin-aarch64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-arm64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "@zed-industries/codex-acp"]
-
-[agent_servers.symposium-codex.targets.darwin-x86_64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-x64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "@zed-industries/codex-acp"]
-
-[agent_servers.symposium-codex.targets.linux-x86_64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-x64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "@zed-industries/codex-acp"]
-
-[agent_servers.symposium-codex.targets.linux-aarch64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-arm64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "@zed-industries/codex-acp"]
-
-[agent_servers.symposium-codex.targets.windows-x86_64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-windows-x64.zip"
-cmd = "./symposium-acp-agent.exe"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "@zed-industries/codex-acp"]
-
-# Kiro CLI
-[agent_servers.symposium-kiro]
-name = "Symposium (Kiro CLI)"
-icon = "./icons/symposium.svg"
-
-[agent_servers.symposium-kiro.targets.darwin-aarch64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-arm64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "kiro-cli-chat", "acp"]
-
-[agent_servers.symposium-kiro.targets.darwin-x86_64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-x64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "kiro-cli-chat", "acp"]
-
-[agent_servers.symposium-kiro.targets.linux-x86_64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-x64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "kiro-cli-chat", "acp"]
-
-[agent_servers.symposium-kiro.targets.linux-aarch64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-arm64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "kiro-cli-chat", "acp"]
-
-[agent_servers.symposium-kiro.targets.windows-x86_64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-windows-x64.zip"
-cmd = "./symposium-acp-agent.exe"
-args = ["act-as-agent", "--proxy", "defaults", "--", "kiro-cli-chat", "acp"]
-
-# Gemini
-[agent_servers.symposium-gemini]
-name = "Symposium (Gemini)"
-icon = "./icons/symposium.svg"
-
-[agent_servers.symposium-gemini.targets.darwin-aarch64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-arm64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "--", "@google/gemini-cli@latest", "--experimental-acp"]
-
-[agent_servers.symposium-gemini.targets.darwin-x86_64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-x64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "--", "@google/gemini-cli@latest", "--experimental-acp"]
-
-[agent_servers.symposium-gemini.targets.linux-x86_64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-x64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "--", "@google/gemini-cli@latest", "--experimental-acp"]
-
-[agent_servers.symposium-gemini.targets.linux-aarch64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-arm64.tar.gz"
-cmd = "./symposium-acp-agent"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "--", "@google/gemini-cli@latest", "--experimental-acp"]
-
-[agent_servers.symposium-gemini.targets.windows-x86_64]
-archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-windows-x64.zip"
-cmd = "./symposium-acp-agent.exe"
-args = ["act-as-agent", "--proxy", "defaults", "--", "npx", "-y", "--", "@google/gemini-cli@latest", "--experimental-acp"]
+args = ["act-as-configured"]
