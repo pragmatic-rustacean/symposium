@@ -41,7 +41,7 @@
   </li>
 </ul>
 
-## Installing from source (all editors)
+## Installing from source
 
 Clone the repository and use the setup tool:
 
@@ -66,3 +66,5 @@ Options can be combined:
 ```bash
 cargo setup --acp --zed    # Install ACP binaries and configure Zed
 ```
+
+For editors other than VSCode and Zed, you need to manually configure your editor to run `symposium-acp-agent act-as-configured`.
