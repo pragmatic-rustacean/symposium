@@ -1,5 +1,7 @@
 # How to install
 
+## Install in your favorite editor
+
 <ul class="editor-list">
   <li>
     <a href="./install-vscode.md">
@@ -25,3 +27,29 @@
     </a>
   </li>
 </ul>
+
+## Installing from source (all editors)
+
+Clone the repository and use the setup tool:
+
+```bash
+git clone https://github.com/symposium-dev/symposium.git
+cd symposium
+cargo setup --all
+```
+
+### Setup options
+
+| Option | Description |
+|--------|-------------|
+| `--all` | Install everything (ACP binaries, VSCode extension, Zed config) |
+| `--acp` | Install ACP binaries only |
+| `--vscode` | Build and install VSCode extension |
+| `--zed` | Configure Zed editor |
+| `--dry-run` | Show what would be done without making changes |
+
+Options can be combined:
+
+```bash
+cargo setup --acp --zed    # Install ACP binaries and configure Zed
+```
