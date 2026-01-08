@@ -156,10 +156,7 @@ fn print_completion_message(
     }
 
     if configured_zed {
-        println!(
-            "🔧 Zed configured with {} agent(s)",
-            zed::ZedAgent::ALL.len()
-        );
+        println!("🔧 Zed configured with Symposium agent");
         println!("   Restart Zed to use the new configuration");
         println!();
     }
