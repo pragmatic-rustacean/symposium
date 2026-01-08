@@ -15,7 +15,7 @@ Symposium works with any editor that supports ACP. See the [editors on ACP](http
    ```
 3. Configure your editor to run:
    ```
-   ~/.cargo/bin/symposium-acp-agent act-as-configured
+   ~/.cargo/bin/symposium-acp-agent run
    ```
 
 Instructions for configuring ACP support in common editors can be found here:

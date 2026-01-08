@@ -13,24 +13,24 @@ icon = "./icons/symposium.svg"
 [agent_servers.symposium.targets.darwin-aarch64]
 archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-arm64.tar.gz"
 cmd = "./symposium-acp-agent"
-args = ["act-as-configured"]
+args = ["run"]
 
 [agent_servers.symposium.targets.darwin-x86_64]
 archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-darwin-x64.tar.gz"
 cmd = "./symposium-acp-agent"
-args = ["act-as-configured"]
+args = ["run"]
 
 [agent_servers.symposium.targets.linux-x86_64]
 archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-x64.tar.gz"
 cmd = "./symposium-acp-agent"
-args = ["act-as-configured"]
+args = ["run"]
 
 [agent_servers.symposium.targets.linux-aarch64]
 archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-linux-arm64.tar.gz"
 cmd = "./symposium-acp-agent"
-args = ["act-as-configured"]
+args = ["run"]
 
 [agent_servers.symposium.targets.windows-x86_64]
 archive = "https://github.com/symposium-dev/symposium/releases/latest/download/symposium-windows-x64.zip"
 cmd = "./symposium-acp-agent.exe"
-args = ["act-as-configured"]
+args = ["run"]

@@ -31,7 +31,7 @@
 - [Common Issues](./design/common-issues.md)
 - [Distribution](./design/distribution.md)
 - [Components](./design/components.md)
-- [Act-as-Configured Mode](./design/act-as-configured.md)
+- [Run Mode](./design/run-mode.md)
 - [Rust Crate Sources](./design/rust-crate-sources.md)
 - [VSCode Extension](./design/vscode-extension/architecture.md)
     - [Message Protocol](./design/vscode-extension/message-protocol.md)

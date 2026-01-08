@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-/// Configure Zed with Symposium agent using act-as-configured mode
+/// Configure Zed with Symposium agent using run mode
 pub fn configure_zed(symposium_acp_agent_path: &Path, dry_run: bool) -> Result<()> {
     let zed_config_path = get_zed_config_path()?;
 
@@ -34,11 +34,11 @@ pub fn configure_zed(symposium_acp_agent_path: &Path, dry_run: bool) -> Result<(
         .as_object_mut()
         .context("agent_servers is not an object")?;
 
-    // Create single Symposium agent using act-as-configured
+    // Create single Symposium agent using run mode
     let agent_config = json!({
         "type": "custom",
         "command": symposium_acp_agent_path.to_string_lossy(),
-        "args": ["act-as-configured"],
+        "args": ["run"],
         "env": {}
     });
 

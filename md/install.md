@@ -67,4 +67,4 @@ Options can be combined:
 cargo setup --acp --zed    # Install ACP binaries and configure Zed
 ```
 
-For editors other than VSCode and Zed, you need to manually configure your editor to run `symposium-acp-agent act-as-configured`.
+For editors other than VSCode and Zed, you need to manually configure your editor to run `symposium-acp-agent run`.

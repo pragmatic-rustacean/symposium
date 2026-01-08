@@ -304,7 +304,7 @@ export function getCurrentAgent(): AgentConfig | undefined {
 }
 
 /**
- * Resolve an agent to a JSON string for passing to `symposium-acp-agent run --agent`.
+ * Resolve an agent to a JSON string for passing to `symposium-acp-agent run-with --agent`.
  *
  * First tries `registry resolve <id>` which handles:
  * - Built-in agents (elizacp, etc.)

@@ -1,8 +1,8 @@
-# act-as-configured Mode
+# Run Mode
 
 ## Overview
 
-The `act-as-configured` subcommand reads agent configuration from `~/.symposium/config.jsonc`, simplifying editor setup to a single agent that adapts based on user configuration.
+The `run` subcommand reads agent configuration from `~/.symposium/config.jsonc`, simplifying editor setup to a single agent that adapts based on user configuration.
 
 ## Config File Format
 
@@ -24,7 +24,7 @@ The `act-as-configured` subcommand reads agent configuration from `~/.symposium/
 
 ## Behavior
 
-1. **Config exists:** Parse it and run with those settings (equivalent to `act-as-agent --proxy <proxies> -- <agent>`)
+1. **Config exists:** Parse it and run with those settings (equivalent to `run-with --proxy <proxies> --agent <json>`)
 2. **No config:** Run a configuration agent that walks the user through setup interactively
 
 ## Configuration Agent
@@ -42,10 +42,10 @@ The agent expects numeric input (1-N) and repeats the prompt for invalid input.
 
 ```bash
 # Run with configuration
-symposium-acp-agent act-as-configured
+symposium-acp-agent run
 
 # With logging
-symposium-acp-agent act-as-configured --log debug
+symposium-acp-agent run --log debug
 ```
 
 ## Implementation

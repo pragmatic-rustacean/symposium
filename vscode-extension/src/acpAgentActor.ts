@@ -238,7 +238,7 @@ export class AcpAgentActor {
     }
 
     // Build the spawn command and args
-    const spawnArgs: string[] = ["run"];
+    const spawnArgs: string[] = ["run-with"];
 
     if (agentLogLevel) {
       spawnArgs.push("--log", agentLogLevel);

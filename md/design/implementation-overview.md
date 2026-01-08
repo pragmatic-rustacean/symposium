@@ -2,40 +2,37 @@
 
 Symposium uses a **conductor** to orchestrate a dynamic chain of component proxies that enrich agent capabilities. This architecture adapts to different client capabilities and provides consistent functionality regardless of what the editor or agent natively supports.
 
-## Two Deployment Modes
+## Deployment Modes
 
-The `symposium-acp-agent` binary supports two deployment modes via subcommands:
+The `symposium-acp-agent` binary supports several subcommands:
 
-### Agent Mode (`act-as-agent`)
+### Run Mode (`run`)
 
-Acts as a complete agent that wraps a downstream agent:
+The primary way to use Symposium. Reads configuration from `~/.symposium/config.jsonc`:
+
+```bash
+symposium-acp-agent run
+```
+
+If no configuration exists, runs an interactive setup wizard. See [Run Mode](./run-mode.md) for details.
+
+### Run-With Mode (`run-with`)
+
+For programmatic use by editor extensions. Takes explicit agent and proxy configuration:
 
 ```mermaid
 flowchart LR
     Editor --> Agent[symposium-acp-agent] --> DownstreamAgent[claude-code, etc.]
 ```
 
-Use this when you want a single binary that editors can spawn directly. This is ideal for Zed extensions and similar scenarios where the editor expects to spawn a single agent binary.
-
-Example:
+Example with agent (wraps downstream agent):
 ```bash
-symposium-acp-agent act-as-agent --proxy defaults -- npx -y @anthropic-ai/claude-code-acp
+symposium-acp-agent run-with --proxy defaults --agent '{"name":"...","command":"npx",...}'
 ```
 
-### Proxy Mode (`act-as-proxy`)
-
-Sits between an editor and an existing agent, enriching the connection:
-
-```mermaid
-flowchart LR
-    Editor --> Proxy[symposium-acp-agent] --> Agent
-```
-
-Use this when the editor spawns agents separately and you want to insert Symposium's capabilities in between.
-
-Example:
+Example without agent (proxy mode, sits between editor and existing agent):
 ```bash
-symposium-acp-agent act-as-proxy --proxy sparkle --proxy ferris
+symposium-acp-agent run-with --proxy sparkle --proxy ferris
 ```
 
 ## Proxy Configuration

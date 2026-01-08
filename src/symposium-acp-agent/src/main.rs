@@ -4,14 +4,14 @@
 //!
 //! ## Commands
 //!
-//! ### run
-//! Run Symposium with optional agent wrapping:
+//! ### run-with
+//! Run Symposium with a specific agent configuration:
 //! ```bash
 //! # Agent mode: wrap a downstream agent
-//! symposium-acp-agent run --proxy sparkle --proxy ferris --agent '{"name":"...","command":"npx",...}'
+//! symposium-acp-agent run-with --proxy sparkle --proxy ferris --agent '{"name":"...","command":"npx",...}'
 //!
 //! # Proxy mode: sit between editor and existing agent
-//! symposium-acp-agent run --proxy sparkle --proxy ferris
+//! symposium-acp-agent run-with --proxy sparkle --proxy ferris
 //! ```
 //!
 //! ### eliza
@@ -62,11 +62,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Run Symposium with optional agent wrapping
+    /// Run Symposium with a specific agent configuration
     ///
     /// Without --agent: proxy mode (sits between editor and existing agent)
     /// With --agent: agent mode (wraps the specified downstream agent)
-    Run {
+    RunWith {
         #[command(flatten)]
         proxy_opts: ProxyOptions,
 
@@ -90,7 +90,7 @@ enum Command {
     ///
     /// If no configuration file exists, runs an interactive setup wizard
     /// to help create one.
-    ActAsConfigured {
+    Run {
         /// Enable trace logging to the specified directory
         #[arg(long)]
         trace_dir: Option<PathBuf>,
@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Run { proxy_opts, agent } => {
+        Command::RunWith { proxy_opts, agent } => {
             proxy_opts.setup_logging();
             let config = proxy_opts.into_config()?;
 
@@ -232,7 +232,7 @@ async fn main() -> Result<()> {
             vscodelm::serve_stdio(trace_dir).await?;
         }
 
-        Command::ActAsConfigured { trace_dir, log } => {
+        Command::Run { trace_dir, log } => {
             // Set up logging if requested
             if let Some(filter) = &log {
                 use tracing_subscriber::EnvFilter;

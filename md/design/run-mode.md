@@ -1,6 +1,6 @@
-# Act-as-Configured Mode
+# Run Mode
 
-The `act-as-configured` subcommand simplifies editor integration by reading agent configuration from a file rather than requiring command-line arguments.
+The `run` subcommand simplifies editor integration by reading agent configuration from a file rather than requiring command-line arguments.
 
 ## Motivation
 
@@ -8,10 +8,10 @@ Without this mode, editor extensions must either:
 - Hardcode specific agent commands, requiring extension updates to add new agents
 - Expose complex configuration UI for specifying agent commands and proxy options
 
-With `act-as-configured`, the extension simply runs:
+With `run`, the extension simply runs:
 
 ```bash
-symposium-acp-agent act-as-configured
+symposium-acp-agent run
 ```
 
 The agent reads its configuration from `~/.symposium/config.jsonc`, and if no configuration exists, runs an interactive setup wizard.
@@ -49,7 +49,7 @@ The `agent` string is parsed as shell words, so commands like `npx -y @zed-indus
 
 ```
 ┌─────────────────────────────────────────┐
-│         act-as-configured               │
+│                 run                     │
 └─────────────────┬───────────────────────┘
                   │
                   ▼
@@ -69,12 +69,12 @@ The `agent` string is parsed as shell words, so commands like `npx -y @zed-indus
    Run agent       agent (setup wizard)
 ```
 
-When a configuration file exists, `act-as-configured` behaves equivalently to:
+When a configuration file exists, `run` behaves equivalently to:
 
 ```bash
-symposium-acp-agent act-as-agent \
+symposium-acp-agent run-with \
     --proxy sparkle --proxy ferris --proxy cargo \
-    -- npx -y @zed-industries/claude-code-acp
+    --agent '{"name":"...","command":"npx",...}'
 ```
 
 ## Configuration Agent
@@ -108,7 +108,7 @@ The implementation consists of:
 - **Config types:** `SymposiumUserConfig` and `ProxyEntry` structs in `src/symposium-acp-agent/src/config.rs`
 - **Config loading:** `load()` reads from `~/.symposium/config.jsonc`, `save()` writes it
 - **Configuration agent:** `ConfigurationAgent` implements the ACP `Component` trait
-- **CLI integration:** `ActAsConfigured` variant in the `Command` enum
+- **CLI integration:** `Run` variant in the `Command` enum
 
 ### Dependencies
 
