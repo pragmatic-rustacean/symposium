@@ -1829,6 +1829,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "json5"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96b0db21af676c1ce64250b5f40f3ce2cf27e4e47cb91ed91eb6fe9350b430c1"
+dependencies = [
+ "pest",
+ "pest_derive",
+ "serde",
+]
+
+[[package]]
 name = "jsonrpcmsg"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3380,8 +3391,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "json5",
  "serde",
  "serde_json",
+ "serde_jsonc",
  "which 6.0.3",
 ]
 
@@ -3644,6 +3657,7 @@ dependencies = [
  "sparkle-mcp",
  "symposium-cargo",
  "symposium-ferris",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

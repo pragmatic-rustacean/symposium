@@ -56,13 +56,9 @@ impl SymposiumConfig {
                     proxies.push(DynComponent::new(sparkle::SparkleComponent::new()));
                 }
                 "ferris" => {
-                    // Enable all Ferris tools by default
-                    let ferris_config = symposium_ferris::Ferris::new()
-                        .crate_sources(true)
-                        .rust_researcher(true);
-                    proxies.push(DynComponent::new(symposium_ferris::FerrisComponent::new(
-                        ferris_config,
-                    )));
+                    proxies.push(DynComponent::new(
+                        symposium_ferris::FerrisComponent::default(),
+                    ));
                 }
                 "cargo" => {
                     proxies.push(DynComponent::new(symposium_cargo::CargoProxy));
