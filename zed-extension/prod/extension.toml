@@ -1,6 +1,6 @@
 id = "symposium"
 name = "Symposium"
-version = "1.1.1"
+version = "1.2"
 schema_version = 1
 authors = ["Niko Matsakis <niko@alum.mit.edu>"]
 description = "AI the Rust way - enriches AI agents with Rust-focused tools (Sparkle, Ferris, Cargo)"
