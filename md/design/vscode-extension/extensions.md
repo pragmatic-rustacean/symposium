@@ -1,24 +1,8 @@
-# Agent Extensions
+# Extension UI (VSCode)
 
-Agent extensions are proxy components that enrich the agent's capabilities. The VS Code extension allows users to configure which extensions are active, their order, and to add custom extensions.
+This chapter covers VSCode-specific UI for managing extensions. For general extension concepts, see [Agent Extensions](../extensions.md).
 
-## Built-in Extensions
-
-| ID | Name | Description |
-|----|------|-------------|
-| `sparkle` | Sparkle | AI collaboration identity and embodiment |
-| `ferris` | Ferris | Rust development tools (crate sources, rust researcher) |
-| `cargo` | Cargo | Cargo build and run tools |
-
-## Extension Sources
-
-Extensions can come from three sources:
-
-- **built-in**: Bundled with Symposium (sparkle, ferris, cargo)
-- **registry**: Installed from the shared agent registry
-- **custom**: User-defined via executable, npx, pipx, or URL
-
-## Configuration
+## Configuration Storage
 
 Extensions are configured via the `symposium.extensions` VS Code setting:
 
@@ -44,8 +28,6 @@ Custom extensions include their distribution:
 }
 ```
 
-**Order matters** - extensions are applied in the order listed. The first extension in the list is closest to the editor, and the last is closest to the agent.
-
 **Default behavior** - when no setting exists, all built-in extensions are enabled. If the user returns to the default configuration, the key is removed from settings.json entirely.
 
 ## Settings UI
@@ -67,62 +49,15 @@ The QuickPick dialog shows three sections:
    - From executable on your system (local command/path)
    - From npx package
    - From pipx package
+   - From cargo crate
    - From URL to extension.json (GitHub URLs auto-converted to raw)
 
-## CLI Interface
+## Spawn Integration
 
-The VS Code extension passes extension configuration to `symposium-acp-agent` via `--proxy` arguments:
+When spawning an agent, the extension builds `--proxy` arguments from enabled extensions:
 
 ```bash
-symposium-acp-agent --proxy sparkle --proxy ferris --proxy cargo -- npx @zed-industries/claude-code-acp
+symposium-acp-agent run-with --proxy sparkle --proxy ferris --proxy cargo --agent '...'
 ```
 
 Only enabled extensions are passed, in their configured order.
-
-## Registry Format
-
-The shared registry includes both agents and extensions:
-
-```json
-{
-  "date": "2026-01-07",
-  "agents": [...],
-  "extensions": [
-    {
-      "id": "some-extension",
-      "name": "Some Extension",
-      "version": "1.0.0",
-      "description": "Does something useful",
-      "distribution": {
-        "npx": { "package": "@example/some-extension" }
-      }
-    }
-  ]
-}
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│  VS Code Extension                              │
-│  - Reads symposium.extensions setting           │
-│  - Fetches registry extensions                  │
-│  - Renders UI in Settings panel                 │
-│  - Shows QuickPick for adding extensions        │
-│  - Builds --proxy args for agent spawn          │
-└─────────────────┬───────────────────────────────┘
-                  │
-┌─────────────────▼───────────────────────────────┐
-│  symposium-acp-agent                            │
-│  - Parses --proxy arguments                     │
-│  - Validates proxy names (incl. "defaults")     │
-│  - SymposiumConfig builds proxy chain in order  │
-│  - Conductor orchestrates the chain             │
-└─────────────────────────────────────────────────┘
-```
-
-## Future Work
-
-- **Per-extension configuration**: Add sub-options for extensions (e.g., which Ferris tools to enable)
-- **Extension updates**: Check for and apply updates to registry-sourced extensions
