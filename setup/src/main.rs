@@ -156,12 +156,12 @@ fn print_completion_message(
     }
 
     if configured_zed {
-        let agents = zed::detect_zed_agents();
-        if !agents.is_empty() {
-            println!("🔧 Zed configured with {} agent(s)", agents.len());
-            println!("   Restart Zed to use the new configuration");
-            println!();
-        }
+        println!(
+            "🔧 Zed configured with {} agent(s)",
+            zed::ZedAgent::ALL.len()
+        );
+        println!("   Restart Zed to use the new configuration");
+        println!();
     }
 
     Ok(())

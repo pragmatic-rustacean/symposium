@@ -3,29 +3,32 @@
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-/// Detected ACP agent available for Zed configuration
-#[derive(Debug, Clone)]
+/// ACP agents available for Zed configuration
+#[derive(Debug, Clone, Copy)]
 pub enum ZedAgent {
     ClaudeCode,
     Codex,
+    KiroCli,
+    Gemini,
 }
 
 impl ZedAgent {
-    /// Get the npx package name for this agent
-    fn npx_package(&self) -> &str {
-        match self {
-            ZedAgent::ClaudeCode => "@zed-industries/claude-code-acp",
-            ZedAgent::Codex => "@zed-industries/codex-acp",
-        }
-    }
+    /// All available agents
+    pub const ALL: &[ZedAgent] = &[
+        ZedAgent::ClaudeCode,
+        ZedAgent::Codex,
+        ZedAgent::KiroCli,
+        ZedAgent::Gemini,
+    ];
 
     /// Get the human-readable name for this agent
     fn display_name(&self) -> &str {
         match self {
             ZedAgent::ClaudeCode => "Claude Code",
             ZedAgent::Codex => "Codex",
+            ZedAgent::KiroCli => "Kiro CLI",
+            ZedAgent::Gemini => "Gemini",
         }
     }
 
@@ -33,48 +36,31 @@ impl ZedAgent {
     fn config_name(&self) -> String {
         format!("Symposium ({})", self.display_name())
     }
-}
 
-/// Detect which ACP agents are available on the system
-pub fn detect_zed_agents() -> Vec<ZedAgent> {
-    let mut agents = Vec::new();
-
-    // Check for claude (Claude Code)
-    if is_command_available("claude") {
-        agents.push(ZedAgent::ClaudeCode);
+    /// Get the downstream agent command and args (what comes after `--`)
+    fn downstream_args(&self) -> Vec<&str> {
+        match self {
+            ZedAgent::ClaudeCode => vec!["npx", "-y", "@zed-industries/claude-code-acp"],
+            ZedAgent::Codex => vec!["npx", "-y", "@zed-industries/codex-acp"],
+            ZedAgent::KiroCli => vec!["kiro-cli-chat", "acp"],
+            ZedAgent::Gemini => vec![
+                "npx",
+                "-y",
+                "--",
+                "@google/gemini-cli@latest",
+                "--experimental-acp",
+            ],
+        }
     }
-
-    // Check for codex
-    if is_command_available("codex") {
-        agents.push(ZedAgent::Codex);
-    }
-
-    agents
 }
 
-/// Check if a command is available on the system
-fn is_command_available(cmd: &str) -> bool {
-    Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
-
-/// Configure Zed with detected agents
+/// Configure Zed with all supported agents
 pub fn configure_zed(symposium_acp_agent_path: &Path, dry_run: bool) -> Result<()> {
     let zed_config_path = get_zed_config_path()?;
 
     if !zed_config_path.exists() {
         println!("⚠️  Zed settings.json not found, skipping Zed configuration");
         println!("   Expected path: {}", zed_config_path.display());
-        return Ok(());
-    }
-
-    let agents = detect_zed_agents();
-
-    if agents.is_empty() {
-        println!("⚠️  No supported agents found (claude, codex), skipping Zed configuration");
         return Ok(());
     }
 
@@ -97,11 +83,10 @@ pub fn configure_zed(symposium_acp_agent_path: &Path, dry_run: bool) -> Result<(
         .as_object_mut()
         .context("agent_servers is not an object")?;
 
-    // Add configuration for each detected agent
-    for agent in &agents {
+    // Add configuration for all agents
+    for agent in ZedAgent::ALL {
         let config_name = agent.config_name();
-
-        let agent_config = create_agent_config(symposium_acp_agent_path, agent.npx_package());
+        let agent_config = create_agent_config(symposium_acp_agent_path, agent);
 
         if dry_run {
             println!("   Would add configuration for: {}", config_name);
@@ -124,7 +109,7 @@ pub fn configure_zed(symposium_acp_agent_path: &Path, dry_run: bool) -> Result<(
 
         println!(
             "✅ Zed configuration updated with {} agent(s)",
-            agents.len()
+            ZedAgent::ALL.len()
         );
     }
 
@@ -132,11 +117,15 @@ pub fn configure_zed(symposium_acp_agent_path: &Path, dry_run: bool) -> Result<(
 }
 
 /// Create an agent server configuration entry
-fn create_agent_config(symposium_acp_agent_path: &Path, npx_package: &str) -> Value {
+fn create_agent_config(symposium_acp_agent_path: &Path, agent: &ZedAgent) -> Value {
+    // Build args: act-as-agent --proxy defaults -- <downstream args>
+    let mut args: Vec<&str> = vec!["act-as-agent", "--proxy", "defaults", "--"];
+    args.extend(agent.downstream_args());
+
     json!({
         "type": "custom",
         "command": symposium_acp_agent_path.to_string_lossy(),
-        "args": ["--", "npx", "-y", npx_package],
+        "args": args,
         "env": {}
     })
 }
