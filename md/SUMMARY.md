@@ -58,6 +58,7 @@
       - [VSCode Webview Lifecycle](./references/vscode-webview-lifecycle.md)
       - [VSCode Language Model Tool API](./references/vscode-lm-tool-api.md)
       - [VSCode Language Model Tool Rejection](./references/vscode-lm-tool-rejection.md)
+      - [GitHub Actions Rust Releases](./references/gh-actions-rust-releases.md)
       - [Language Server Protocol Overview](./research/lsp-overview/README.md)
           - [Base Protocol](./research/lsp-overview/base-protocol.md)
           - [Language Features](./research/lsp-overview/language-features.md)
