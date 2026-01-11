@@ -95,6 +95,12 @@ jobs:
             ${{ runner.os }}-cargo-vscode-
             ${{ runner.os }}-cargo-
 
+      - name: Cache VS Code test download
+        uses: actions/cache@v4
+        with:
+          path: vscode-extension/.vscode-test
+          key: ${{ runner.os }}-vscode-test-1.108.0
+
       - name: Install ACP tools
         run: |
           cargo install --force elizacp

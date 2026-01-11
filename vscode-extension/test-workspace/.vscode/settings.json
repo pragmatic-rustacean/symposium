@@ -1,3 +1,7 @@
 {
   "symposium.currentAgentId": "elizacp",
+  "symposium.extensions": [
+    { "id": "ferris", "_enabled": true, "_source": "built-in" },
+    { "id": "cargo", "_enabled": true, "_source": "built-in" },
+  ],
 }
