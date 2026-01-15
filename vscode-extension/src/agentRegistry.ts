@@ -306,7 +306,7 @@ export function getCurrentAgent(): AgentConfig | undefined {
 /**
  * Resolve an agent to a JSON string for passing to `symposium-acp-agent run-with --agent`.
  *
- * First tries `registry resolve <id>` which handles:
+ * First tries `registry resolve-agent <id>` which handles:
  * - Built-in agents (elizacp, etc.)
  * - Registry agents (gemini, auggie, etc.)
  * - Binary downloads and caching
@@ -319,7 +319,7 @@ export function getCurrentAgent(): AgentConfig | undefined {
 export async function resolveAgentJson(agent: AgentConfig): Promise<string> {
   // First, try resolving via the binary (handles built-ins and registry agents)
   try {
-    return await runRegistryCommand(["resolve", agent.id]);
+    return await runRegistryCommand(["resolve-agent", agent.id]);
   } catch {
     // Agent not in registry - fall back to local resolution
   }
@@ -328,6 +328,15 @@ export async function resolveAgentJson(agent: AgentConfig): Promise<string> {
   const dist = agent.distribution;
   const name = agent.name ?? agent.id;
 
+  let resolved = await resolveLocalDistribution(name, dist);
+  if (resolved) {
+    return resolved;
+  }
+  
+  throw new Error(`No compatible distribution found for agent "${agent.id}"`);
+}
+
+export async function resolveLocalDistribution(name: string, dist: Distribution | undefined): Promise<string | undefined> {
   // Build McpServer JSON format
   interface McpServerJson {
     name: string;
@@ -338,7 +347,7 @@ export async function resolveAgentJson(agent: AgentConfig): Promise<string> {
 
   let result: McpServerJson;
 
-  if (dist.local) {
+  if (dist?.local) {
     const envArray = dist.local.env
       ? Object.entries(dist.local.env).map(([k, v]) => ({ name: k, value: v }))
       : [];
@@ -348,14 +357,14 @@ export async function resolveAgentJson(agent: AgentConfig): Promise<string> {
       args: dist.local.args ?? [],
       env: envArray,
     };
-  } else if (dist.npx) {
+  } else if (dist?.npx) {
     result = {
       name,
       command: "npx",
       args: ["-y", dist.npx.package, ...(dist.npx.args ?? [])],
       env: [],
     };
-  } else if (dist.pipx) {
+  } else if (dist?.pipx) {
     result = {
       name,
       command: "pipx",
@@ -363,7 +372,7 @@ export async function resolveAgentJson(agent: AgentConfig): Promise<string> {
       env: [],
     };
   } else {
-    throw new Error(`No compatible distribution found for agent "${agent.id}"`);
+    return undefined;
   }
 
   return JSON.stringify(result);

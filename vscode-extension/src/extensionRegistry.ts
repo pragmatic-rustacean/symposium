@@ -7,7 +7,7 @@
  */
 
 import * as vscode from "vscode";
-import { Distribution, runRegistryCommand } from "./agentRegistry";
+import { Distribution, resolveLocalDistribution, runRegistryCommand } from "./agentRegistry";
 
 /**
  * Source tracking for extensions
@@ -648,4 +648,40 @@ async function handleCustomExtension(
     default:
       return false;
   }
+}
+
+/**
+ * Resolves extensions to a JSON string for passing to `symposium-acp-agent run-with --proxy`.
+ *
+ * First tries `registry resolve-extension <id>` which handles:
+ * - Built-in extensions (sparkle, ferris, cargo)
+ * - Registry extensions
+ * - Binary downloads and caching
+ *
+ * Falls back to local distribution resolution for custom extensions
+ * configured in settings with explicit distribution.
+ *
+ * @throws Error if no compatible distribution is found
+ */
+export async function resolveExtensionJson(extension: ExtensionSettingsEntry): Promise<string> {
+  // First, try resolving via the binary (handles built-ins and registry extensions)
+  try {
+    let resolved = await runRegistryCommand(["resolve-extension", extension.id]);
+    console.log("Resolved extension.", extension, resolved);
+    // Return as json string, so remove the quotes
+    return resolved.replaceAll("\"", "");
+  } catch {
+    // Extension not built-in or in registry - fall back to local resolution
+  }
+
+  // Fall back to local distribution resolution for custom extensions
+  const dist = extension.distribution;
+  const name = extension.name ?? extension.id;
+
+    let resolved = await resolveLocalDistribution(name, dist);
+    if (resolved) {
+      return resolved;
+    }
+    
+    throw new Error(`No compatible distribution found for extension "${extension.id}"`);
 }

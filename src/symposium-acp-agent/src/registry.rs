@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::symposium::KNOWN_PROXIES;
+
 /// Registry URL - same as VSCode extension uses
 const REGISTRY_URL: &str =
     "https://github.com/agentclientprotocol/registry/releases/latest/download/registry.json";
@@ -522,6 +524,33 @@ pub async fn resolve_agent(agent_id: &str) -> Result<McpServer> {
         .with_context(|| format!("Agent '{}' not found in registry", agent_id))?;
 
     resolve_distribution(&entry).await
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum ExtensionResolution {
+    Builtin(String),
+    McpServer(McpServer),
+}
+
+/// Resolve an agent ID to an McpServer configuration
+pub async fn resolve_extension(agent_id: &str) -> Result<ExtensionResolution> {
+    // Check built-ins first
+    if KNOWN_PROXIES.contains(&agent_id) {
+        return Ok(ExtensionResolution::Builtin(agent_id.to_string()));
+    }
+
+    // Fetch registry and find the agent
+    let registry = fetch_registry().await?;
+    let entry = registry
+        .extensions
+        .into_iter()
+        .find(|a| a.id == agent_id)
+        .with_context(|| format!("Extension '{}' not found in registry", agent_id))?;
+
+    Ok(ExtensionResolution::McpServer(
+        resolve_distribution(&entry).await?,
+    ))
 }
 
 /// Resolve a registry entry's distribution to an McpServer

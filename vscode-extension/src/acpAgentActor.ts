@@ -12,6 +12,7 @@ import * as vscode from "vscode";
 import { AgentConfiguration } from "./agentConfiguration";
 import { getAgentById, resolveAgentJson } from "./agentRegistry";
 import { logger } from "./extension";
+import { resolveExtensionJson } from "./extensionRegistry";
 
 /**
  * Tool call information passed to callbacks
@@ -262,10 +263,9 @@ export class AcpAgentActor {
     }
 
     // Add extension proxies from configuration
-    for (const ext of config.extensions) {
-      if (ext._enabled) {
-        spawnArgs.push("--proxy", ext.id);
-      }
+    const extensions = await Promise.all(config.extensions.filter(ext => ext._enabled).map(ext => resolveExtensionJson(ext)));
+    for (const ext of extensions) {
+      spawnArgs.push("--proxy", ext);
     }
 
     const agentSpawnArgs = vsConfig.get<string[]>("agentSpawnArgs", []);

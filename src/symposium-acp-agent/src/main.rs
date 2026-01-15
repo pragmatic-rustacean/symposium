@@ -48,7 +48,7 @@ use std::path::PathBuf;
 mod config;
 
 use symposium_acp_agent::registry;
-use symposium_acp_agent::symposium::{Symposium, SymposiumConfig, KNOWN_PROXIES};
+use symposium_acp_agent::symposium::{ProxySource, Symposium, SymposiumConfig, KNOWN_PROXIES};
 use symposium_acp_agent::vscodelm;
 
 #[derive(Parser, Debug)]
@@ -116,9 +116,14 @@ enum RegistryCommand {
 
     /// Resolve an agent ID to an executable McpServer configuration.
     /// Downloads binaries if needed.
-    Resolve {
+    ResolveAgent {
         /// The agent ID to resolve
         agent_id: String,
+    },
+
+    ResolveExtension {
+        /// The extension to resolve
+        extension_id: String,
     },
 }
 
@@ -148,31 +153,47 @@ struct ProxyOptions {
 impl ProxyOptions {
     /// Expand proxy names, handling "defaults" expansion.
     /// Returns an error if any proxy name is unknown.
-    fn expand_proxy_names(&self) -> Result<Vec<String>> {
-        let mut result = Vec::new();
+    fn expand_proxies(raw_proxies: Vec<String>) -> Result<Vec<ProxySource>> {
+        let mut proxies = Vec::with_capacity(raw_proxies.len());
+        for proxy in raw_proxies {
+            let proxy = proxy.trim();
 
-        for name in &self.proxies {
-            if name == "defaults" {
-                // Expand "defaults" to all known proxies
-                result.extend(KNOWN_PROXIES.iter().map(|s| s.to_string()));
-            } else if KNOWN_PROXIES.contains(&name.as_str()) {
-                result.push(name.clone());
-            } else {
-                anyhow::bail!(
-                    "Unknown proxy name: '{}'. Known proxies: {}, defaults",
-                    name,
-                    KNOWN_PROXIES.join(", ")
-                );
+            if proxy.starts_with('{') {
+                let server: sacp::schema::McpServer = serde_json::from_str(proxy).map_err(|e| {
+                    sacp::util::internal_error(format!("Failed to parse JSON: {}", e))
+                })?;
+                proxies.push(ProxySource::McpServer(server));
+                continue;
             }
+
+            if proxy == "defaults" {
+                proxies.extend(
+                    KNOWN_PROXIES
+                        .iter()
+                        .map(|s| ProxySource::Builtin(s.to_string())),
+                );
+                continue;
+            }
+
+            if KNOWN_PROXIES.contains(&proxy) {
+                proxies.push(ProxySource::Builtin(proxy.to_string()));
+                continue;
+            }
+
+            anyhow::bail!(
+                "Unknown proxy name: '{}'. Expected a known proxy ({}, defaults) or json.",
+                proxy,
+                KNOWN_PROXIES.join(", ")
+            );
         }
 
-        Ok(result)
+        Ok(proxies)
     }
 
     /// Build a SymposiumConfig from these options.
     fn into_config(self) -> Result<SymposiumConfig> {
-        let proxy_names = self.expand_proxy_names()?;
-        let mut config = SymposiumConfig::from_proxy_names(proxy_names);
+        let proxies = Self::expand_proxies(self.proxies)?;
+        let mut config = SymposiumConfig::from_proxies(proxies);
 
         if let Some(trace_dir) = self.trace_dir {
             config = config.trace_dir(trace_dir);
@@ -247,7 +268,13 @@ async fn main() -> Result<()> {
                     let proxy_names = user_config.enabled_proxies();
                     let agent_args = user_config.agent_args()?;
 
-                    let mut config = SymposiumConfig::from_proxy_names(proxy_names);
+                    // The user config is currently just a set of (builtin) proxy names.
+                    let mut config = SymposiumConfig::from_proxies(
+                        proxy_names
+                            .into_iter()
+                            .map(|proxy| ProxySource::Builtin(proxy))
+                            .collect(),
+                    );
                     if let Some(trace_dir) = trace_dir {
                         config = config.trace_dir(trace_dir);
                     }
@@ -283,8 +310,12 @@ async fn main() -> Result<()> {
                 let extensions = registry::list_extensions().await?;
                 println!("{}", serde_json::to_string(&extensions)?);
             }
-            RegistryCommand::Resolve { agent_id } => {
+            RegistryCommand::ResolveAgent { agent_id } => {
                 let server = registry::resolve_agent(&agent_id).await?;
+                println!("{}", serde_json::to_string(&server)?);
+            }
+            RegistryCommand::ResolveExtension { extension_id } => {
+                let server = registry::resolve_extension(&extension_id).await?;
                 println!("{}", serde_json::to_string(&server)?);
             }
         },
