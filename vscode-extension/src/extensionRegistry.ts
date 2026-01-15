@@ -666,10 +666,7 @@ async function handleCustomExtension(
 export async function resolveExtensionJson(extension: ExtensionSettingsEntry): Promise<string> {
   // First, try resolving via the binary (handles built-ins and registry extensions)
   try {
-    let resolved = await runRegistryCommand(["resolve-extension", extension.id]);
-    console.log("Resolved extension.", extension, resolved);
-    // Return as json string, so remove the quotes
-    return resolved.replaceAll("\"", "");
+    return await runRegistryCommand(["resolve-extension", extension.id]);
   } catch {
     // Extension not built-in or in registry - fall back to local resolution
   }

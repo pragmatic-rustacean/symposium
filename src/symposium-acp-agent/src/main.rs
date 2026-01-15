@@ -28,20 +28,11 @@
 //!
 //! ## Proxy Configuration
 //!
-//! Use `--proxy <name>` to specify extensions. Order matters - proxies are
-//! chained in the order specified.
-//!
-//! Known proxies: sparkle, ferris, cargo
-//!
-//! Special value `defaults` expands to all known proxies:
-//! ```bash
-//! --proxy defaults           # equivalent to: --proxy sparkle --proxy ferris --proxy cargo
-//! --proxy foo --proxy defaults --proxy bar  # foo, sparkle, ferris, cargo, bar
-//! ```
+//! Use `--proxy <json>` to specify extensions. Order matters - proxies are
+//! chained in the order specified. Use `registry resolve-extension` to get json.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use sacp::schema::McpServer;
 use sacp::{Component, DynComponent, ProxyToConductor};
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
@@ -49,10 +40,10 @@ use std::path::PathBuf;
 mod config;
 
 use symposium_acp_agent::registry::{
-    self, CargoDistribution, Distribution, RegistryEntry, BUILTIN_PROXIES,
+    self, built_in_proxies,
 };
 use symposium_acp_agent::symposium::{
-    cargo_proxy, ferris_proxy, sparkle_proxy, Symposium, SymposiumConfig,
+    Symposium, SymposiumConfig,
 };
 use symposium_acp_agent::vscodelm;
 
@@ -74,13 +65,11 @@ enum Command {
         /// Extension proxy to include in the chain (can be specified multiple times).
         /// Order matters - proxies are chained in the order specified.
         ///
-        /// Known proxies: sparkle, ferris, cargo
-        ///
-        /// Special value "defaults" expands to all known proxies.
+        /// JSON from `registry resolve-extension` is expected.
         #[arg(long = "proxy", value_name = "NAME")]
         proxies: Vec<String>,
 
-        /// Agent specification: JSON from `registry resolve` or a command string.
+        /// Agent specification: JSON from `registry resolve-agent` or a command string.
         /// If omitted, runs in proxy mode.
         #[arg(long)]
         agent: Option<String>,
@@ -124,6 +113,13 @@ enum Command {
     /// Agent registry commands (for tooling integration)
     #[command(subcommand)]
     Registry(RegistryCommand),
+
+    /// Act as a shim around a builtin proxy (i.e. ferris and cargo).
+    /// Will be removed when those are published and can be used "normally".
+    ProxyShim {
+        #[arg(long)]
+        proxy: String,
+    }
 }
 
 /// Registry subcommands - output JSON for tooling integration
@@ -148,15 +144,8 @@ enum RegistryCommand {
     },
 }
 
-#[derive(Clone, Debug)]
-enum ProxySource {
-    Builtin(String),
-    AcpProxy(McpServer),
-}
-
-/// Expand proxy names, handling "defaults" expansion.
-/// Returns an error if any proxy name is unknown.
-fn expand_proxies(raw_proxies: Vec<String>) -> Result<Vec<ProxySource>> {
+/// Build proxy components from the configured sources, preserving order.
+fn build_proxies(raw_proxies: Vec<String>) -> Result<Vec<DynComponent<ProxyToConductor>>> {
     let mut proxies = Vec::with_capacity(raw_proxies.len());
     for proxy in raw_proxies {
         let proxy = proxy.trim();
@@ -164,60 +153,11 @@ fn expand_proxies(raw_proxies: Vec<String>) -> Result<Vec<ProxySource>> {
         if proxy.starts_with('{') {
             let server: sacp::schema::McpServer = serde_json::from_str(proxy)
                 .map_err(|e| sacp::util::internal_error(format!("Failed to parse JSON: {}", e)))?;
-            proxies.push(ProxySource::AcpProxy(server));
+            proxies.push(DynComponent::new(AcpAgent::new(server)));
             continue;
         }
 
-        if proxy == "defaults" {
-            proxies.extend(
-                BUILTIN_PROXIES
-                    .iter()
-                    .map(|s| ProxySource::Builtin(s.to_string())),
-            );
-            continue;
-        }
-
-        if BUILTIN_PROXIES.contains(&proxy) {
-            proxies.push(ProxySource::Builtin(proxy.to_string()));
-            continue;
-        }
-
-        anyhow::bail!(
-            "Unknown proxy name: '{}'. Expected a known proxy ({}, defaults) or json.",
-            proxy,
-            BUILTIN_PROXIES.join(", ")
-        );
-    }
-
-    Ok(proxies)
-}
-
-/// Build proxy components from the configured sources, preserving order.
-async fn build_proxies(
-    proxy_sources: Vec<ProxySource>,
-) -> Result<Vec<DynComponent<ProxyToConductor>>, sacp::Error> {
-    let mut proxies: Vec<DynComponent<ProxyToConductor>> = vec![];
-
-    for proxy in proxy_sources {
-        match proxy {
-            ProxySource::AcpProxy(server) => {
-                proxies.push(DynComponent::new(AcpAgent::new(server)));
-            }
-            ProxySource::Builtin(name) => match name.as_str() {
-                "sparkle" => {
-                    proxies.push(sparkle_proxy().await?);
-                }
-                "ferris" => {
-                    proxies.push(ferris_proxy());
-                }
-                "cargo" => {
-                    proxies.push(cargo_proxy());
-                }
-                other => {
-                    tracing::warn!("Unknown proxy name: {}", other);
-                }
-            },
-        }
+        anyhow::bail!("Expected json from `registry resolve-extension`.");
     }
 
     Ok(proxies)
@@ -245,8 +185,7 @@ async fn main() -> Result<()> {
             trace_dir,
             log,
         } => {
-            let proxy_sources = expand_proxies(proxies)?;
-            let proxies = build_proxies(proxy_sources).await?;
+            let proxies = build_proxies(proxies)?;
             let mut config = SymposiumConfig::new();
 
             if let Some(trace_dir) = trace_dir {
@@ -306,13 +245,16 @@ async fn main() -> Result<()> {
                         config = config.trace_dir(trace_dir);
                     }
 
-                    let proxies = build_proxies(
-                        proxy_names
-                            .into_iter()
-                            .map(|proxy| ProxySource::Builtin(proxy))
-                            .collect(),
-                    )
-                    .await?;
+                    let possible_proxies = built_in_proxies()?;
+                    let mut proxies = vec![];
+                    for name in proxy_names {
+                        if let Some(entry) = possible_proxies.iter().find(|p| p.id == name) {
+                            let server = crate::registry::resolve_distribution(entry)
+                                .await
+                                .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
+                            proxies.push(DynComponent::new(AcpAgent::new(server)));
+                        }
+                    }
                     let agent = AcpAgent::from_args(&agent_args)?;
 
                     tracing::debug!(
@@ -353,6 +295,20 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string(&server)?);
             }
         },
+
+        Command::ProxyShim { proxy } => {
+            match proxy.as_str() {
+                "ferris" => {
+                    symposium_ferris::FerrisComponent::default().serve(sacp_tokio::Stdio::new()).await?;
+                }
+                "cargo" => {
+                    symposium_cargo::CargoProxy.serve(sacp_tokio::Stdio::new()).await?;
+                }
+                _ => {
+                    anyhow::bail!("Unexpected proxy {proxy}. Expected one of `ferris` or `cargo`.");
+                }
+            }
+        }
     }
 
     Ok(())

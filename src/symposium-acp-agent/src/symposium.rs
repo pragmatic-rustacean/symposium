@@ -10,10 +10,7 @@
 use sacp::link::{AgentToClient, ConductorToProxy, ProxyToConductor};
 use sacp::{Component, DynComponent};
 use sacp_conductor::{Conductor, McpBridgeMode, ProxiesAndAgent};
-use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
-
-use crate::registry::{CargoDistribution, Distribution, RegistryEntry};
 
 /// Shared configuration for Symposium proxy chains.
 #[derive(Clone)]
@@ -139,40 +136,4 @@ impl Component<AgentToClient> for SymposiumAgent {
         tracing::debug!("Starting conductor.run()");
         conductor.run(client).await
     }
-}
-
-// This will all eventually get replaced with just registry entries
-
-pub async fn sparkle_proxy() -> Result<DynComponent<ProxyToConductor>, sacp::Error> {
-    // Sparkle is installed via cargo-binstall from crates.io
-    let entry = RegistryEntry {
-        id: "sparkle".to_string(),
-        name: "Sparkle".to_string(),
-        version: String::new(),
-        description: Some("Sparkle AI Collaboration Identity Framework".to_string()),
-        distribution: Distribution {
-            local: None,
-            npx: None,
-            pipx: None,
-            binary: None,
-            cargo: Some(CargoDistribution {
-                crate_name: "sparkle-mcp".to_string(),
-                version: None, // Use latest
-                binary: None,  // Auto-discover from crates.io
-                args: vec![],
-            }),
-        },
-    };
-    let server = crate::registry::resolve_distribution(&entry)
-        .await
-        .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
-    Ok(DynComponent::new(AcpAgent::new(server)))
-}
-
-pub fn ferris_proxy() -> DynComponent<ProxyToConductor> {
-    DynComponent::new(symposium_ferris::FerrisComponent::default())
-}
-
-pub fn cargo_proxy() -> DynComponent<ProxyToConductor> {
-    DynComponent::new(symposium_cargo::CargoProxy)
 }

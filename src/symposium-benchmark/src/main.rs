@@ -5,10 +5,11 @@
 
 use anyhow::Result;
 use clap::Parser;
+use sacp::DynComponent;
 use sacp_tokio::AcpAgent;
+use symposium_acp_agent::registry::{built_in_proxies, resolve_distribution};
 use std::path::PathBuf;
 use std::str::FromStr;
-use symposium_acp_agent::symposium::{cargo_proxy, ferris_proxy};
 
 #[derive(Parser, Debug)]
 #[command(name = "symposium-benchmark")]
@@ -104,7 +105,13 @@ async fn run_benchmark(benchmark: &Benchmark, output_dir: &PathBuf) -> Result<()
     // Build Symposium agent with ferris proxy only (no sparkle for benchmarks)
     let agent = AcpAgent::from_str("npx -y '@zed-industries/claude-code-acp'")?;
     let config = symposium_acp_agent::symposium::SymposiumConfig::new().trace_dir(".");
-    let proxies = vec![ferris_proxy(), cargo_proxy()];
+    let mut proxies = vec![];
+    for proxy in built_in_proxies()? {
+        if proxy.id == "ferris" || proxy.id == "cargo" {
+            let server = resolve_distribution(&proxy).await?;
+            proxies.push(DynComponent::new(AcpAgent::new(server)));
+        }
+    }
     let symposium =
         symposium_acp_agent::symposium::Symposium::new(config, proxies).with_agent(agent);
 

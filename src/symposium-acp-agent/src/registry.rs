@@ -12,9 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Known proxy/extension names that can be configured.
-pub const BUILTIN_PROXIES: &[&str] = &["sparkle", "ferris", "cargo"];
-
 /// Registry URL - same as VSCode extension uses
 const REGISTRY_URL: &str =
     "https://github.com/agentclientprotocol/registry/releases/latest/download/registry.json";
@@ -164,6 +161,66 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
                 local: Some(LocalDistribution {
                     command: exe_str.clone(),
                     args: vec!["eliza".to_string()],
+                    env: HashMap::new(),
+                }),
+                npx: None,
+                pipx: None,
+                binary: None,
+                cargo: None,
+            },
+        },
+    ])
+}
+
+pub fn built_in_proxies() -> Result<Vec<RegistryEntry>> {
+    let exe = current_exe()?;
+    let exe_str = exe.to_string_lossy().to_string();
+
+    Ok(vec![
+        RegistryEntry {
+            id: "sparkle".to_string(),
+            name: "Sparkle".to_string(),
+            version: String::new(),
+            description: Some("Sparkle AI Collaboration Identity Framework".to_string()),
+            distribution: Distribution {
+                local: None,
+                npx: None,
+                pipx: None,
+                binary: None,
+                cargo: Some(CargoDistribution {
+                    crate_name: "sparkle-mcp".to_string(),
+                    version: None, // Use latest
+                    binary: None,  // Auto-discover from crates.io
+                    args: vec![],
+                }),
+            },
+        },
+        RegistryEntry {
+            id: "ferris".to_string(),
+            name: "Ferris".to_string(),
+            version: String::new(),
+            description: Some("Built-in Ferris component".to_string()),
+            distribution: Distribution {
+                local: Some(LocalDistribution {
+                    command: exe_str.clone(),
+                    args: vec!["proxy-shim".to_string(), "ferris".to_string()],
+                    env: HashMap::new(),
+                }),
+                npx: None,
+                pipx: None,
+                binary: None,
+                cargo: None,
+            },
+        },
+        RegistryEntry {
+            id: "cargo".to_string(),
+            name: "Cargo".to_string(),
+            version: String::new(),
+            description: Some("Built-in Cargo component".to_string()),
+            distribution: Distribution {
+                local: Some(LocalDistribution {
+                    command: exe_str.clone(),
+                    args: vec!["proxy-shim".to_string(), "cargo".to_string()],
                     env: HashMap::new(),
                 }),
                 npx: None,
@@ -527,18 +584,11 @@ pub async fn resolve_agent(agent_id: &str) -> Result<McpServer> {
     resolve_distribution(&entry).await
 }
 
-#[derive(Serialize)]
-#[serde(untagged)]
-pub enum ExtensionResolution {
-    Builtin(String),
-    AcpProxy(McpServer),
-}
-
 /// Resolve an agent ID to an McpServer configuration
-pub async fn resolve_extension(agent_id: &str) -> Result<ExtensionResolution> {
+pub async fn resolve_extension(agent_id: &str) -> Result<McpServer> {
     // Check built-ins first
-    if BUILTIN_PROXIES.contains(&agent_id) {
-        return Ok(ExtensionResolution::Builtin(agent_id.to_string()));
+    if let Some(entry) = built_in_proxies()?.into_iter().find(|p| p.id == agent_id) {
+        return resolve_distribution(&entry).await;
     }
 
     // Fetch registry and find the agent
@@ -549,9 +599,7 @@ pub async fn resolve_extension(agent_id: &str) -> Result<ExtensionResolution> {
         .find(|a| a.id == agent_id)
         .with_context(|| format!("Extension '{}' not found in registry", agent_id))?;
 
-    Ok(ExtensionResolution::AcpProxy(
-        resolve_distribution(&entry).await?,
-    ))
+    resolve_distribution(&entry).await
 }
 
 /// Resolve a registry entry's distribution to an McpServer
