@@ -16,9 +16,9 @@ use futures::StreamExt;
 use fxhash::FxHashMap;
 use sacp::link::AgentToClient;
 use sacp::schema::{
-    AgentCapabilities, ContentBlock, ContentChunk, InitializeRequest, InitializeResponse,
-    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionId,
-    SessionNotification, SessionUpdate, StopReason, TextContent,
+    AgentCapabilities, AvailableCommand, ContentBlock, ContentChunk, InitializeRequest,
+    InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
+    SessionId, SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 use sacp::util::MatchMessage;
 use sacp::{ClientPeer, Component, JrConnectionCx, JrRequestCx, MessageCx};
@@ -118,8 +118,7 @@ impl ConfigAgent {
                 }
 
                 ConfigAgentMessage::MessageToClient(message) => {
-                    // Forward message from conductor to client
-                    cx.send_proxied_message_to(ClientPeer, message)?;
+                    self.handle_message_to_client(message, &cx).await?;
                 }
 
                 ConfigAgentMessage::NewSessionCreated(response, conductor, request_cx) => {
@@ -277,6 +276,36 @@ impl ConfigAgent {
          No configuration found. Let's set up your AI agent.\n\n\
          (Initial setup wizard coming soon...)"
             .to_string()
+    }
+
+    /// Handle messages from conductors destined for the client.
+    ///
+    /// Intercepts `AvailableCommandsUpdate` to inject the `/symposium:config` command,
+    /// then forwards the message to the client.
+    async fn handle_message_to_client(
+        &self,
+        message: MessageCx,
+        cx: &JrConnectionCx<AgentToClient>,
+    ) -> Result<(), sacp::Error> {
+        MatchMessage::new(message)
+            .if_notification(async |mut notif: SessionNotification| {
+                // Check if this is an AvailableCommandsUpdate
+                if let SessionUpdate::AvailableCommandsUpdate(ref mut update) = notif.update {
+                    // Inject the /symposium:config command
+                    update.available_commands.push(AvailableCommand::new(
+                        "symposium:config",
+                        "Configure Symposium settings",
+                    ));
+                }
+                // Forward the (possibly modified) notification
+                cx.send_notification(notif)
+            })
+            .await
+            .otherwise(async |message| {
+                // Default: proxy the message onward
+                cx.send_proxied_message_to(ClientPeer, message)
+            })
+            .await
     }
 
     /// Handle messages using MatchMessage for dispatch.
