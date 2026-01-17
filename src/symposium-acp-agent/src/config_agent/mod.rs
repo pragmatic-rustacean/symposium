@@ -25,6 +25,21 @@ use sacp::{Component, JrConnectionCx, JrRequestCx, MessageCx};
 use std::path::PathBuf;
 use uberconductor_actor::UberconductorHandle;
 
+/// Extract the session ID from a message, if present.
+fn get_session_id(message: &MessageCx) -> Result<Option<SessionId>, sacp::Error> {
+    let params = match message {
+        MessageCx::Request(req, _) => req.params(),
+        MessageCx::Notification(notif) => notif.params(),
+    };
+    match params.get("sessionId") {
+        Some(value) => {
+            let session_id = serde_json::from_value(value.clone())?;
+            Ok(Some(session_id))
+        }
+        None => Ok(None),
+    }
+}
+
 /// State for a single session.
 #[derive(Clone)]
 enum SessionState {
@@ -220,6 +235,37 @@ impl ConfigAgent {
         request_cx.respond(PromptResponse::new(StopReason::EndTurn))
     }
 
+    /// Handle a message for an existing session by forwarding to the appropriate conductor.
+    async fn handle_session_message(
+        &self,
+        session_id: &SessionId,
+        message: MessageCx,
+    ) -> Result<(), sacp::Error> {
+        match self.sessions.get(session_id) {
+            Some(SessionState::Delegating { conductor }) => {
+                conductor.forward_message(message).await
+            }
+            Some(SessionState::InitialSetup) | Some(SessionState::Config { .. }) => {
+                // Config mode doesn't handle arbitrary messages
+                match message {
+                    MessageCx::Request(req, request_cx) => {
+                        request_cx.respond_with_error(sacp::Error::new(
+                            -32601,
+                            format!("Method not supported in config mode: {}", req.method()),
+                        ))
+                    }
+                    MessageCx::Notification(_) => Ok(()),
+                }
+            }
+            None => match message {
+                MessageCx::Request(_, request_cx) => {
+                    request_cx.respond_with_error(sacp::Error::new(-32600, "Unknown session"))
+                }
+                MessageCx::Notification(_) => Ok(()),
+            },
+        }
+    }
+
     /// Generate the initial setup welcome message.
     fn initial_setup_welcome(&self) -> String {
         "Welcome to Symposium!\n\n\
@@ -260,10 +306,12 @@ impl ConfigAgent {
             .await
             .otherwise(async |message| {
                 // For messages that contain a session ID, look up the session and forward
-                // For now, just log unknown messages
-                tracing::debug!("Received unhandled message: {:?}", message);
+                if let Some(session_id) = get_session_id(&message)? {
+                    return self.handle_session_message(&session_id, message).await;
+                }
 
-                // Return error for requests, ignore notifications
+                // No session ID - return error for requests, ignore notifications
+                tracing::debug!("Received message without session ID: {:?}", message);
                 match message {
                     MessageCx::Request(req, request_cx) => request_cx.respond_with_error(
                         sacp::Error::new(-32601, format!("Method not found: {}", req.method())),

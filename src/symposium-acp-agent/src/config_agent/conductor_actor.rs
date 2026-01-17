@@ -33,7 +33,9 @@ pub enum ConductorMessage {
         request: PromptRequest,
         request_cx: JrRequestCx<PromptResponse>,
     },
-    // Future: other session-bound messages like cancel, etc.
+
+    /// Forward an arbitrary message to the conductor.
+    ForwardMessage { message: MessageCx },
 }
 
 /// Handle for communicating with a ConductorActor.
@@ -96,6 +98,14 @@ impl ConductorHandle {
                 request,
                 request_cx,
             })
+            .await
+            .map_err(|_| sacp::util::internal_error("Conductor actor closed"))
+    }
+
+    /// Forward an arbitrary message to the conductor.
+    pub async fn forward_message(&self, message: MessageCx) -> Result<(), sacp::Error> {
+        self.tx
+            .send(ConductorMessage::ForwardMessage { message })
             .await
             .map_err(|_| sacp::util::internal_error("Conductor actor closed"))
     }
@@ -201,6 +211,14 @@ async fn run_actor(
                             .forward_to_request_cx(request_cx)
                         {
                             tracing::error!("Failed to forward prompt to conductor: {}", e);
+                        }
+                    }
+
+                    ConductorMessage::ForwardMessage { message } => {
+                        if let Err(e) =
+                            conductor_cx.send_proxied_message_to(sacp::AgentPeer, message)
+                        {
+                            tracing::error!("Failed to forward message to conductor: {}", e);
                         }
                     }
                 }
