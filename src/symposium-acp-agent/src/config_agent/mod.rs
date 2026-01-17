@@ -63,10 +63,6 @@ enum SessionState {
 
     /// Session is delegated to a conductor.
     Delegating { conductor: ConductorHandle },
-
-    /// Initial setup - no configuration exists yet.
-    /// After setup completes, transitions to Config with return_to: None.
-    InitialSetup,
 }
 
 /// The ConfigAgent manages sessions and configuration.
@@ -269,6 +265,7 @@ impl ConfigAgent {
         request_cx: JrRequestCx<NewSessionResponse>,
         uberconductor: &UberconductorHandle,
         cx: &JrConnectionCx<AgentToClient>,
+        config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
     ) -> Result<(), sacp::Error> {
         // Load configuration
         let config = self
@@ -277,21 +274,30 @@ impl ConfigAgent {
 
         match config {
             None => {
-                // No config - start initial setup
+                // No config - enter config mode for initial setup.
+                // ConfigModeActor with None config will show welcome and agent selection.
                 let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
-
-                self.sessions
-                    .insert(session_id.clone(), SessionState::InitialSetup);
 
                 // Respond with our generated session ID
                 request_cx.respond(NewSessionResponse::new(session_id.clone()))?;
 
-                // Send welcome message
-                let welcome = self.initial_setup_welcome();
-                cx.send_notification(SessionNotification::new(
+                // Spawn the config mode actor with None config (triggers initial setup)
+                let actor_handle = ConfigModeHandle::spawn_with_agents(
+                    None,
+                    session_id.clone(),
+                    config_agent_tx.clone(),
+                    None, // No resume_tx for initial setup
+                    cx,
+                    self.injected_agents.clone(),
+                )?;
+
+                self.sessions.insert(
                     session_id,
-                    SessionUpdate::AgentMessageChunk(ContentChunk::new(welcome.into())),
-                ))?;
+                    SessionState::Config {
+                        actor: actor_handle,
+                        return_to: None,
+                    },
+                );
 
                 Ok(())
             }
@@ -327,11 +333,10 @@ impl ConfigAgent {
             None
         };
 
-        // Load current config (or start with empty agent)
+        // Load current config (None triggers initial setup in the actor)
         let current_config = self
             .load_config()
-            .map_err(|e| sacp::Error::new(-32603, e.to_string()))?
-            .unwrap_or_else(|| SymposiumUserConfig::with_agent(""));
+            .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
 
         // Spawn the config mode actor (it holds resume_tx and drops it on exit)
         let actor_handle = ConfigModeHandle::spawn_with_agents(
@@ -399,10 +404,6 @@ impl ConfigAgent {
                     conductor.send_prompt(request, request_cx).await
                 }
             }
-            Some(SessionState::InitialSetup) => {
-                // Handle initial setup input (not yet using actor)
-                self.handle_config_input(request, request_cx, cx).await
-            }
             Some(SessionState::Config { actor, .. }) => {
                 // Forward input to the config mode actor
                 let input = Self::extract_prompt_text(&request);
@@ -431,42 +432,6 @@ impl ConfigAgent {
             .collect::<Vec<_>>()
             .join(" ")
     }
-
-    /// Handle input during configuration mode.
-    async fn handle_config_input(
-        &mut self,
-        request: PromptRequest,
-        request_cx: JrRequestCx<PromptResponse>,
-        cx: &JrConnectionCx<AgentToClient>,
-    ) -> Result<(), sacp::Error> {
-        let session_id = request.session_id.clone();
-
-        // Extract text from prompt
-        let input = request
-            .prompt
-            .iter()
-            .filter_map(|block| match block {
-                ContentBlock::Text(TextContent { text, .. }) => Some(text.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        // TODO: Implement config state machine (agent selection, etc.)
-        // For now, just echo back that we received input
-        let response = format!(
-            "Received: {}\n\n(Config mode not yet fully implemented)",
-            input
-        );
-
-        cx.send_notification(SessionNotification::new(
-            session_id,
-            SessionUpdate::AgentMessageChunk(ContentChunk::new(response.into())),
-        ))?;
-
-        request_cx.respond(PromptResponse::new(StopReason::EndTurn))
-    }
-
     /// Handle a message for an existing session by forwarding to the appropriate conductor.
     async fn handle_session_message(
         &self,
@@ -477,7 +442,7 @@ impl ConfigAgent {
             Some(SessionState::Delegating { conductor }) => {
                 conductor.forward_message(message).await
             }
-            Some(SessionState::InitialSetup) | Some(SessionState::Config { .. }) => {
+            Some(SessionState::Config { .. }) => {
                 // Config mode doesn't handle arbitrary messages
                 match message {
                     MessageCx::Request(req, request_cx) => {
@@ -496,14 +461,6 @@ impl ConfigAgent {
                 MessageCx::Notification(_) => Ok(()),
             },
         }
-    }
-
-    /// Generate the initial setup welcome message.
-    fn initial_setup_welcome(&self) -> String {
-        "Welcome to Symposium!\n\n\
-         No configuration found. Let's set up your AI agent.\n\n\
-         (Initial setup wizard coming soon...)"
-            .to_string()
     }
 
     /// Handle messages from conductors destined for the client.
@@ -556,7 +513,7 @@ impl ConfigAgent {
             .await
             .if_request(
                 async |request: NewSessionRequest, request_cx: JrRequestCx<NewSessionResponse>| {
-                    self.handle_new_session(request, request_cx, uberconductor, cx)
+                    self.handle_new_session(request, request_cx, uberconductor, cx, config_agent_tx)
                         .await
                 },
             )

@@ -60,9 +60,11 @@ fn elizacp_config() -> SymposiumUserConfig {
 // Basic flow tests
 // ============================================================================
 
-/// Test that when no config exists, we get the initial setup flow.
+/// Test that when no config exists, we get the initial setup flow with agent selection.
 #[tokio::test]
 async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
+    use crate::registry::AgentListEntry;
+
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.jsonc");
     // Don't create the file - we want to test the "no config" path
@@ -70,7 +72,25 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
-    let agent = ConfigAgent::new().with_config_path(&config_path);
+    // Inject test agents so we don't hit the registry
+    let test_agents = vec![
+        AgentListEntry {
+            id: "claude-code".to_string(),
+            name: "Claude Code".to_string(),
+            description: Some("AI coding assistant".to_string()),
+            version: None,
+        },
+        AgentListEntry {
+            id: "gemini".to_string(),
+            name: "Gemini CLI".to_string(),
+            description: Some("Google's AI".to_string()),
+            version: None,
+        },
+    ];
+
+    let agent = ConfigAgent::new()
+        .with_config_path(&config_path)
+        .with_injected_agents(test_agents);
 
     ClientToAgent::builder()
         .on_receive_notification(
@@ -94,7 +114,7 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
                 .await?;
             assert_eq!(init_response.protocol_version, ProtocolVersion::LATEST);
 
-            // Request a new session - should trigger initial setup
+            // Request a new session - should trigger initial setup (config mode with agent selection)
             let session_response = cx
                 .send_request(NewSessionRequest::new("."))
                 .block_task()
@@ -104,25 +124,45 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
             // Give the async notification time to arrive
             tokio::time::sleep(Duration::from_millis(50)).await;
 
-            // Should have received the initial setup welcome
+            // Should have received the welcome message and agent selection menu
             let text = notifications.lock().unwrap().text();
             expect![[r#"
                 Welcome to Symposium!
 
                 No configuration found. Let's set up your AI agent.
+                # Select Agent
 
-                (Initial setup wizard coming soon...)"#]]
+                `0` **Claude Code** - AI coding assistant
+                `1` **Gemini CLI** - Google's AI
+
+                Enter a number to select, or `back` to return.
+            "#]]
             .assert_eq(&text);
 
-            // Sending a prompt should work (initial setup handles it)
+            // Select an agent (Claude Code = 0)
+            notifications.lock().unwrap().clear();
             let prompt_response = cx
                 .send_request(PromptRequest::new(
                     session_id,
-                    vec![ContentBlock::Text(TextContent::new("hello"))],
+                    vec![ContentBlock::Text(TextContent::new("0"))],
                 ))
                 .block_task()
                 .await?;
             assert_eq!(prompt_response.stop_reason, StopReason::EndTurn);
+
+            // Give the async notification time to arrive
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            // Should now show the main config menu with the selected agent
+            let text = notifications.lock().unwrap().text();
+            assert!(
+                text.contains("Agent set to"),
+                "Expected agent selection confirmation"
+            );
+            assert!(
+                text.contains("Symposium Configuration"),
+                "Expected main menu after selection"
+            );
 
             Ok(())
         })

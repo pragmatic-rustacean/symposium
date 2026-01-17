@@ -58,12 +58,15 @@ impl ConfigModeHandle {
     ///
     /// Returns a handle for sending input to the actor.
     ///
+    /// If `config` is None, this is initial setup - the actor will go straight
+    /// to agent selection and create a default config after selection.
+    ///
     /// The `resume_tx` is an optional oneshot sender that, when dropped, will
     /// signal the conductor to resume processing. If provided, it will be
     /// dropped when the actor exits (either save or cancel).
     #[allow(dead_code)] // Convenience wrapper, kept for future non-test use
     pub fn spawn(
-        config: SymposiumUserConfig,
+        config: Option<SymposiumUserConfig>,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         resume_tx: Option<oneshot::Sender<()>>,
@@ -74,10 +77,13 @@ impl ConfigModeHandle {
 
     /// Spawn a new config mode actor with a pre-populated agent list.
     ///
+    /// If `config` is None, this is initial setup - the actor will go straight
+    /// to agent selection and create a default config after selection.
+    ///
     /// If `agents` is Some, skips the registry fetch and uses the provided list.
     /// This is useful for testing.
     pub fn spawn_with_agents(
-        config: SymposiumUserConfig,
+        config: Option<SymposiumUserConfig>,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         resume_tx: Option<oneshot::Sender<()>>,
@@ -113,7 +119,9 @@ impl ConfigModeHandle {
 
 /// The config mode actor state.
 struct ConfigModeActor {
-    config: SymposiumUserConfig,
+    /// Current configuration. None means initial setup (no config exists yet).
+    /// When None, we go straight to agent selection and create a default config.
+    config: Option<SymposiumUserConfig>,
     session_id: SessionId,
     config_agent_tx: UnboundedSender<ConfigAgentMessage>,
     rx: mpsc::Receiver<ConfigModeInput>,
@@ -138,9 +146,69 @@ impl ConfigModeActor {
             }
         }
 
-        self.main_menu_loop().await;
+        // If no config exists (initial setup), go straight to agent selection
+        let mut config = match self.config.take() {
+            Some(config) => config,
+            None => {
+                self.send_message(
+                    "Welcome to Symposium!\n\n\
+                     No configuration found. Let's set up your AI agent.\n",
+                );
+                match self.initial_agent_selection().await {
+                    Some(config) => config,
+                    None => {
+                        // User cancelled during initial setup
+                        self.cancelled();
+                        return Ok(());
+                    }
+                }
+            }
+        };
+
+        self.main_menu_loop(&mut config).await;
 
         Ok(())
+    }
+
+    /// Initial agent selection (when no config exists).
+    /// Returns the new config if an agent was selected, None if cancelled.
+    async fn initial_agent_selection(&mut self) -> Option<SymposiumUserConfig> {
+        loop {
+            self.show_agent_selection();
+
+            let Some(input) = self.next_input().await else {
+                return None;
+            };
+
+            let text = input.trim();
+            let text_upper = text.to_uppercase();
+
+            // Cancel/back exits without creating config
+            if text_upper == "CANCEL" || text_upper == "BACK" {
+                return None;
+            }
+
+            // Select by index
+            if let Ok(index) = text.parse::<usize>() {
+                if index < self.available_agents.len() {
+                    let agent = &self.available_agents[index];
+                    self.send_message(format!("Agent set to `{}`.", agent.name));
+                    // Create default config with selected agent
+                    return Some(SymposiumUserConfig::with_agent(&agent.id));
+                } else {
+                    self.send_message(format!(
+                        "Invalid index. Please enter 0-{}.",
+                        self.available_agents.len().saturating_sub(1)
+                    ));
+                }
+                continue;
+            }
+
+            self.send_message(format!(
+                "Unknown input: `{}`. Enter a number or `cancel`.",
+                text
+            ));
+        }
     }
 
     /// Wait for the next user input.
@@ -162,12 +230,12 @@ impl ConfigModeActor {
     }
 
     /// Signal that configuration is done (save and exit).
-    fn done(&self) {
+    fn done(&self, config: &SymposiumUserConfig) {
         self.config_agent_tx
             .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
                 self.session_id.clone(),
                 ConfigModeOutput::Done {
-                    config: self.config.clone(),
+                    config: config.clone(),
                 },
             ))
             .ok();
@@ -184,30 +252,34 @@ impl ConfigModeActor {
     }
 
     /// Main menu loop.
-    async fn main_menu_loop(&mut self) {
-        self.show_main_menu();
+    async fn main_menu_loop(&mut self, config: &mut SymposiumUserConfig) {
+        self.show_main_menu(config);
 
         loop {
             let Some(input) = self.next_input().await else {
                 return;
             };
 
-            match self.handle_main_menu_input(&input).await {
+            match self.handle_main_menu_input(&input, config).await {
                 MenuAction::Done => return,
-                MenuAction::Redisplay => self.show_main_menu(),
+                MenuAction::Redisplay => self.show_main_menu(config),
                 MenuAction::Continue => {}
             }
         }
     }
 
     /// Handle input in the main menu.
-    async fn handle_main_menu_input(&mut self, text: &str) -> MenuAction {
+    async fn handle_main_menu_input(
+        &mut self,
+        text: &str,
+        config: &mut SymposiumUserConfig,
+    ) -> MenuAction {
         let text = text.trim();
         let text_upper = text.to_uppercase();
 
         // Save and exit
         if text_upper == "SAVE" {
-            self.done();
+            self.done(config);
             return MenuAction::Done;
         }
 
@@ -219,22 +291,22 @@ impl ConfigModeActor {
 
         // Agent selection
         if text_upper == "A" || text_upper == "AGENT" {
-            self.agent_selection_loop().await;
+            self.agent_selection_loop(config).await;
             return MenuAction::Redisplay;
         }
 
         // Toggle proxy by index
         if let Ok(index) = text.parse::<usize>() {
-            if index < self.config.proxies.len() {
-                self.config.proxies[index].enabled = !self.config.proxies[index].enabled;
-                let proxy = &self.config.proxies[index];
+            if index < config.proxies.len() {
+                config.proxies[index].enabled = !config.proxies[index].enabled;
+                let proxy = &config.proxies[index];
                 let status = if proxy.enabled { "enabled" } else { "disabled" };
                 self.send_message(format!("Proxy `{}` is now {}.", proxy.name, status));
                 return MenuAction::Redisplay;
             } else {
                 self.send_message(format!(
                     "Invalid index. Please enter 0-{}.",
-                    self.config.proxies.len().saturating_sub(1)
+                    config.proxies.len().saturating_sub(1)
                 ));
                 return MenuAction::Continue;
             }
@@ -248,13 +320,13 @@ impl ConfigModeActor {
             let from: usize = caps[1].parse().unwrap();
             let to: usize = caps[2].parse().unwrap();
 
-            if from < self.config.proxies.len() && to <= self.config.proxies.len() {
-                let proxy = self.config.proxies.remove(from);
+            if from < config.proxies.len() && to <= config.proxies.len() {
+                let proxy = config.proxies.remove(from);
                 let insert_at = if to > from { to - 1 } else { to };
                 self.send_message(format!("Moved `{}` from {} to {}.", proxy.name, from, to));
-                self.config
+                config
                     .proxies
-                    .insert(insert_at.min(self.config.proxies.len()), proxy);
+                    .insert(insert_at.min(config.proxies.len()), proxy);
                 return MenuAction::Redisplay;
             } else {
                 self.send_message("Invalid indices for move.");
@@ -267,8 +339,8 @@ impl ConfigModeActor {
         MenuAction::Continue
     }
 
-    /// Agent selection loop.
-    async fn agent_selection_loop(&mut self) {
+    /// Agent selection loop (from main menu, config already exists).
+    async fn agent_selection_loop(&mut self, config: &mut SymposiumUserConfig) {
         loop {
             self.show_agent_selection();
 
@@ -288,7 +360,7 @@ impl ConfigModeActor {
             if let Ok(index) = text.parse::<usize>() {
                 if index < self.available_agents.len() {
                     let agent = &self.available_agents[index];
-                    self.config.agent = agent.id.clone();
+                    config.agent = agent.id.clone();
                     self.send_message(format!("Agent set to `{}`.", agent.name));
                     return;
                 } else {
@@ -308,31 +380,31 @@ impl ConfigModeActor {
     }
 
     /// Show the main menu.
-    fn show_main_menu(&self) {
+    fn show_main_menu(&self, config: &SymposiumUserConfig) {
         let mut msg = String::new();
         msg.push_str("# Symposium Configuration\n\n");
 
         // Current agent
         msg.push_str("**Agent:** ");
-        if self.config.agent.is_empty() {
+        if config.agent.is_empty() {
             msg.push_str("(not configured)\n\n");
         } else {
             // Try to find the agent name
             let agent_name = self
                 .available_agents
                 .iter()
-                .find(|a| a.id == self.config.agent)
+                .find(|a| a.id == config.agent)
                 .map(|a| a.name.as_str())
-                .unwrap_or(&self.config.agent);
+                .unwrap_or(&config.agent);
             msg.push_str(&format!("`{}`\n\n", agent_name));
         }
 
         // Proxies
         msg.push_str("**Proxies:**\n");
-        if self.config.proxies.is_empty() {
+        if config.proxies.is_empty() {
             msg.push_str("  (none configured)\n");
         } else {
-            for (i, proxy) in self.config.proxies.iter().enumerate() {
+            for (i, proxy) in config.proxies.iter().enumerate() {
                 let status = if proxy.enabled { "✓" } else { "✗" };
                 msg.push_str(&format!("  `{}` [{}] {}\n", i, status, proxy.name));
             }
