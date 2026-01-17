@@ -1,8 +1,8 @@
-//! User configuration for Symposium.
+//! Configuration Agent for first-time setup.
 //!
-//! Reads configuration from `~/.symposium/config.jsonc`.
+//! This module contains the legacy ConfigurationAgent used for first-time setup.
+//! It will eventually be replaced by the new ConfigAgent in the library.
 
-use anyhow::Result;
 use futures::future::{BoxFuture, Shared};
 use futures::FutureExt;
 use sacp::schema::{
@@ -11,106 +11,12 @@ use sacp::schema::{
     SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 use sacp::{AgentToClient, Component, JrConnectionCx, JrRequestCx};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-/// User configuration for Symposium.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SymposiumUserConfig {
-    /// Downstream agent command (shell words, e.g., "npx -y @anthropic-ai/claude-code-acp")
-    pub agent: String,
-
-    /// Proxy extensions to enable
-    pub proxies: Vec<ProxyEntry>,
-}
-
-/// A proxy extension entry in the configuration.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ProxyEntry {
-    /// Proxy name (e.g., "sparkle", "ferris", "cargo")
-    pub name: String,
-
-    /// Whether this proxy is enabled
-    pub enabled: bool,
-}
-
-impl SymposiumUserConfig {
-    /// Get the config directory path: ~/.symposium/
-    pub fn dir() -> Result<PathBuf> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
-        Ok(home.join(".symposium"))
-    }
-
-    /// Get the config file path: ~/.symposium/config.jsonc
-    pub fn path() -> Result<PathBuf> {
-        Ok(Self::dir()?.join("config.jsonc"))
-    }
-
-    /// Load config from the default path, returning None if it doesn't exist.
-    pub fn load() -> Result<Option<Self>> {
-        let path = Self::path()?;
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)?;
-        let config: Self = serde_jsonc::from_str(&content)?;
-        Ok(Some(config))
-    }
-
-    /// Save config to the default path.
-    pub fn save(&self) -> Result<()> {
-        self.save_to(&Self::path()?)
-    }
-
-    /// Save config to a specific path.
-    pub fn save_to(&self, path: &PathBuf) -> Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
-        Ok(())
-    }
-
-    /// Get the list of enabled proxy names.
-    pub fn enabled_proxies(&self) -> Vec<String> {
-        self.proxies
-            .iter()
-            .filter(|p| p.enabled)
-            .map(|p| p.name.clone())
-            .collect()
-    }
-
-    /// Parse the agent string into command arguments (shell words).
-    pub fn agent_args(&self) -> Result<Vec<String>> {
-        shell_words::split(&self.agent)
-            .map_err(|e| anyhow::anyhow!("Failed to parse agent command: {}", e))
-    }
-
-    /// Create a default config with all proxies enabled.
-    pub fn with_agent(agent: impl Into<String>) -> Self {
-        Self {
-            agent: agent.into(),
-            proxies: vec![
-                ProxyEntry {
-                    name: "sparkle".to_string(),
-                    enabled: true,
-                },
-                ProxyEntry {
-                    name: "ferris".to_string(),
-                    enabled: true,
-                },
-                ProxyEntry {
-                    name: "cargo".to_string(),
-                    enabled: true,
-                },
-            ],
-        }
-    }
-}
+// Re-export the shared config types
+pub use symposium_acp_agent::user_config::{ProxyEntry, SymposiumUserConfig};
 
 /// An agent available for configuration.
 #[derive(Debug, Clone)]

@@ -50,6 +50,7 @@ url = "2"
 flate2 = "1"
 tar = "0.4"
 zip = "2"
+fxhash.workspace = true
 
 [[example]]
 name = "vscodelm_cli"

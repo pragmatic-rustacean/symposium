@@ -221,7 +221,7 @@ async fn main() -> Result<()> {
                     .init();
             }
 
-            match config::SymposiumUserConfig::load()? {
+            match config::SymposiumUserConfig::load(None::<&std::path::Path>)? {
                 Some(user_config) => {
                     // Run with the loaded configuration
                     let proxy_names = user_config.enabled_proxies();
