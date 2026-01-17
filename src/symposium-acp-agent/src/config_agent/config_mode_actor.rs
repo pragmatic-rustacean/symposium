@@ -69,168 +69,144 @@ impl ConfigModeHandle {
     }
 }
 
-/// States in the config mode phone tree.
-#[derive(Debug, Clone)]
-enum ConfigState {
-    /// Main menu - show current config, accept commands.
-    MainMenu,
+/// Context passed through the actor's async functions.
+struct ActorContext {
+    config: SymposiumUserConfig,
+    session_id: SessionId,
+    config_agent_tx: UnboundedSender<ConfigAgentMessage>,
+    rx: mpsc::Receiver<ConfigModeInput>,
+    available_agents: Vec<AgentListEntry>,
+}
 
-    /// Agent selection - show available agents, pick one.
-    SelectAgent,
+impl ActorContext {
+    /// Wait for the next user input.
+    async fn next_input(&mut self) -> Option<String> {
+        match self.rx.next().await {
+            Some(ConfigModeInput::UserInput(text)) => Some(text),
+            None => None,
+        }
+    }
+
+    /// Send a message to the user.
+    fn send_message(&self, text: impl Into<String>) {
+        self.config_agent_tx
+            .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
+                self.session_id.clone(),
+                ConfigModeOutput::SendMessage(text.into()),
+            ))
+            .ok();
+    }
+
+    /// Signal that configuration is done (save and exit).
+    fn done(&self) {
+        self.config_agent_tx
+            .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
+                self.session_id.clone(),
+                ConfigModeOutput::Done {
+                    config: self.config.clone(),
+                },
+            ))
+            .ok();
+    }
+
+    /// Signal that configuration was cancelled.
+    fn cancelled(&self) {
+        self.config_agent_tx
+            .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
+                self.session_id.clone(),
+                ConfigModeOutput::Cancelled,
+            ))
+            .ok();
+    }
 }
 
 /// The main actor loop.
 async fn run_actor(
-    mut config: SymposiumUserConfig,
+    config: SymposiumUserConfig,
     session_id: SessionId,
     config_agent_tx: UnboundedSender<ConfigAgentMessage>,
-    mut rx: mpsc::Receiver<ConfigModeInput>,
+    rx: mpsc::Receiver<ConfigModeInput>,
 ) -> Result<(), sacp::Error> {
-    // Fetch available agents and extensions
-    let (available_agents, available_extensions) = match fetch_registry_data().await {
-        Ok(data) => data,
+    // Fetch available agents
+    let available_agents = match registry::list_agents().await {
+        Ok(agents) => agents,
         Err(e) => {
-            send_message(
-                &config_agent_tx,
-                &session_id,
-                format!("Warning: Failed to fetch registry: {}", e),
-            );
-            (Vec::new(), Vec::new())
+            config_agent_tx
+                .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
+                    session_id.clone(),
+                    ConfigModeOutput::SendMessage(format!(
+                        "Warning: Failed to fetch registry: {}",
+                        e
+                    )),
+                ))
+                .ok();
+            Vec::new()
         }
     };
 
-    let mut state = ConfigState::MainMenu;
+    let mut ctx = ActorContext {
+        config,
+        session_id,
+        config_agent_tx,
+        rx,
+        available_agents,
+    };
 
-    // Show initial menu
-    show_main_menu(&config_agent_tx, &session_id, &config, &available_agents);
-
-    // Process input
-    while let Some(input) = rx.next().await {
-        match input {
-            ConfigModeInput::UserInput(text) => {
-                let should_continue = handle_input(
-                    &text,
-                    &mut state,
-                    &mut config,
-                    &available_agents,
-                    &available_extensions,
-                    &config_agent_tx,
-                    &session_id,
-                );
-
-                if !should_continue {
-                    break;
-                }
-            }
-        }
-    }
+    main_menu_loop(&mut ctx).await;
 
     Ok(())
 }
 
-/// Fetch available agents and extensions from the registry.
-async fn fetch_registry_data(
-) -> anyhow::Result<(Vec<AgentListEntry>, Vec<registry::ExtensionListEntry>)> {
-    let agents = registry::list_agents().await?;
-    let extensions = registry::list_extensions().await?;
-    Ok((agents, extensions))
-}
+/// Main menu loop.
+async fn main_menu_loop(ctx: &mut ActorContext) {
+    loop {
+        show_main_menu(ctx);
 
-/// Handle user input. Returns false if we should exit.
-fn handle_input(
-    text: &str,
-    state: &mut ConfigState,
-    config: &mut SymposiumUserConfig,
-    available_agents: &[AgentListEntry],
-    _available_extensions: &[registry::ExtensionListEntry],
-    config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
-    session_id: &SessionId,
-) -> bool {
-    let text = text.trim();
+        let Some(input) = ctx.next_input().await else {
+            return;
+        };
 
-    match state {
-        ConfigState::MainMenu => handle_main_menu(
-            text,
-            state,
-            config,
-            available_agents,
-            config_agent_tx,
-            session_id,
-        ),
-        ConfigState::SelectAgent => handle_select_agent(
-            text,
-            state,
-            config,
-            available_agents,
-            config_agent_tx,
-            session_id,
-        ),
+        if !handle_main_menu_input(ctx, &input).await {
+            return;
+        }
     }
 }
 
-/// Handle input in the main menu state.
-fn handle_main_menu(
-    text: &str,
-    state: &mut ConfigState,
-    config: &mut SymposiumUserConfig,
-    available_agents: &[AgentListEntry],
-    config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
-    session_id: &SessionId,
-) -> bool {
+/// Handle input in the main menu. Returns false if we should exit.
+async fn handle_main_menu_input(ctx: &mut ActorContext, text: &str) -> bool {
+    let text = text.trim();
     let text_upper = text.to_uppercase();
 
     // Exit commands
     if text_upper == "EXIT" || text_upper == "DONE" || text_upper == "QUIT" {
-        config_agent_tx
-            .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
-                session_id.clone(),
-                ConfigModeOutput::Done {
-                    config: config.clone(),
-                },
-            ))
-            .ok();
+        ctx.done();
         return false;
     }
 
     // Cancel without saving
     if text_upper == "CANCEL" {
-        config_agent_tx
-            .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
-                session_id.clone(),
-                ConfigModeOutput::Cancelled,
-            ))
-            .ok();
+        ctx.cancelled();
         return false;
     }
 
     // Agent selection
     if text_upper == "A" || text_upper == "AGENT" {
-        *state = ConfigState::SelectAgent;
-        show_agent_selection(config_agent_tx, session_id, available_agents);
+        agent_selection_loop(ctx).await;
         return true;
     }
 
     // Toggle proxy by index
     if let Ok(index) = text.parse::<usize>() {
-        if index < config.proxies.len() {
-            config.proxies[index].enabled = !config.proxies[index].enabled;
-            let proxy = &config.proxies[index];
+        if index < ctx.config.proxies.len() {
+            ctx.config.proxies[index].enabled = !ctx.config.proxies[index].enabled;
+            let proxy = &ctx.config.proxies[index];
             let status = if proxy.enabled { "enabled" } else { "disabled" };
-            send_message(
-                config_agent_tx,
-                session_id,
-                format!("Proxy `{}` is now {}.", proxy.name, status),
-            );
-            show_main_menu(config_agent_tx, session_id, config, available_agents);
+            ctx.send_message(format!("Proxy `{}` is now {}.", proxy.name, status));
         } else {
-            send_message(
-                config_agent_tx,
-                session_id,
-                format!(
-                    "Invalid index. Please enter 0-{}.",
-                    config.proxies.len().saturating_sub(1)
-                ),
-            );
+            ctx.send_message(format!(
+                "Invalid index. Please enter 0-{}.",
+                ctx.config.proxies.len().saturating_sub(1)
+            ));
         }
         return true;
     }
@@ -243,115 +219,90 @@ fn handle_main_menu(
         let from: usize = caps[1].parse().unwrap();
         let to: usize = caps[2].parse().unwrap();
 
-        if from < config.proxies.len() && to <= config.proxies.len() {
-            let proxy = config.proxies.remove(from);
+        if from < ctx.config.proxies.len() && to <= ctx.config.proxies.len() {
+            let proxy = ctx.config.proxies.remove(from);
             let insert_at = if to > from { to - 1 } else { to };
-            send_message(
-                config_agent_tx,
-                session_id,
-                format!("Moved `{}` from {} to {}.", proxy.name, from, to),
-            );
-            config
+            ctx.send_message(format!("Moved `{}` from {} to {}.", proxy.name, from, to));
+            ctx.config
                 .proxies
-                .insert(insert_at.min(config.proxies.len()), proxy);
-            show_main_menu(config_agent_tx, session_id, config, available_agents);
+                .insert(insert_at.min(ctx.config.proxies.len()), proxy);
         } else {
-            send_message(config_agent_tx, session_id, "Invalid indices for move.");
+            ctx.send_message("Invalid indices for move.");
         }
         return true;
     }
 
     // Unknown command
-    send_message(
-        config_agent_tx,
-        session_id,
-        format!("Unknown command: `{}`", text),
-    );
-    show_main_menu(config_agent_tx, session_id, config, available_agents);
+    ctx.send_message(format!("Unknown command: `{}`", text));
     true
 }
-/// Handle input in the agent selection state.
-fn handle_select_agent(
-    text: &str,
-    state: &mut ConfigState,
-    config: &mut SymposiumUserConfig,
-    available_agents: &[AgentListEntry],
-    config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
-    session_id: &SessionId,
-) -> bool {
-    let text_upper = text.to_uppercase();
 
-    // Back to main menu
-    if text_upper == "BACK" || text_upper == "CANCEL" {
-        *state = ConfigState::MainMenu;
-        show_main_menu(config_agent_tx, session_id, config, available_agents);
-        return true;
-    }
+/// Agent selection loop.
+async fn agent_selection_loop(ctx: &mut ActorContext) {
+    loop {
+        show_agent_selection(ctx);
 
-    // Select by index
-    if let Ok(index) = text.parse::<usize>() {
-        if index < available_agents.len() {
-            let agent = &available_agents[index];
-            config.agent = agent.id.clone();
-            send_message(
-                config_agent_tx,
-                session_id,
-                format!("Agent set to `{}`.", agent.name),
-            );
-            *state = ConfigState::MainMenu;
-            show_main_menu(config_agent_tx, session_id, config, available_agents);
-        } else {
-            send_message(
-                config_agent_tx,
-                session_id,
-                format!(
-                    "Invalid index. Please enter 0-{}.",
-                    available_agents.len().saturating_sub(1)
-                ),
-            );
+        let Some(input) = ctx.next_input().await else {
+            return;
+        };
+
+        let text = input.trim();
+        let text_upper = text.to_uppercase();
+
+        // Back to main menu
+        if text_upper == "BACK" || text_upper == "CANCEL" {
+            return;
         }
-        return true;
-    }
 
-    // Unknown
-    send_message(
-        config_agent_tx,
-        session_id,
-        format!("Unknown input: `{}`. Enter a number or `back`.", text),
-    );
-    true
+        // Select by index
+        if let Ok(index) = text.parse::<usize>() {
+            if index < ctx.available_agents.len() {
+                let agent = &ctx.available_agents[index];
+                ctx.config.agent = agent.id.clone();
+                ctx.send_message(format!("Agent set to `{}`.", agent.name));
+                return;
+            } else {
+                ctx.send_message(format!(
+                    "Invalid index. Please enter 0-{}.",
+                    ctx.available_agents.len().saturating_sub(1)
+                ));
+            }
+            continue;
+        }
+
+        ctx.send_message(format!(
+            "Unknown input: `{}`. Enter a number or `back`.",
+            text
+        ));
+    }
 }
 
 /// Show the main menu.
-fn show_main_menu(
-    config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
-    session_id: &SessionId,
-    config: &SymposiumUserConfig,
-    available_agents: &[AgentListEntry],
-) {
+fn show_main_menu(ctx: &ActorContext) {
     let mut msg = String::new();
     msg.push_str("# Symposium Configuration\n\n");
 
     // Current agent
     msg.push_str("**Agent:** ");
-    if config.agent.is_empty() {
+    if ctx.config.agent.is_empty() {
         msg.push_str("(not configured)\n\n");
     } else {
         // Try to find the agent name
-        let agent_name = available_agents
+        let agent_name = ctx
+            .available_agents
             .iter()
-            .find(|a| a.id == config.agent)
+            .find(|a| a.id == ctx.config.agent)
             .map(|a| a.name.as_str())
-            .unwrap_or(&config.agent);
+            .unwrap_or(&ctx.config.agent);
         msg.push_str(&format!("`{}`\n\n", agent_name));
     }
 
     // Proxies
     msg.push_str("**Proxies:**\n");
-    if config.proxies.is_empty() {
+    if ctx.config.proxies.is_empty() {
         msg.push_str("  (none configured)\n");
     } else {
-        for (i, proxy) in config.proxies.iter().enumerate() {
+        for (i, proxy) in ctx.config.proxies.iter().enumerate() {
             let status = if proxy.enabled { "✓" } else { "✗" };
             msg.push_str(&format!("  `{}` [{}] {}\n", i, status, proxy.name));
         }
@@ -366,22 +317,18 @@ fn show_main_menu(
     msg.push_str("  `done` - Save and exit\n");
     msg.push_str("  `cancel` - Exit without saving\n");
 
-    send_message(config_agent_tx, session_id, msg);
+    ctx.send_message(msg);
 }
 
 /// Show the agent selection menu.
-fn show_agent_selection(
-    config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
-    session_id: &SessionId,
-    available_agents: &[AgentListEntry],
-) {
+fn show_agent_selection(ctx: &ActorContext) {
     let mut msg = String::new();
     msg.push_str("# Select Agent\n\n");
 
-    if available_agents.is_empty() {
+    if ctx.available_agents.is_empty() {
         msg.push_str("No agents available.\n\n");
     } else {
-        for (i, agent) in available_agents.iter().enumerate() {
+        for (i, agent) in ctx.available_agents.iter().enumerate() {
             msg.push_str(&format!("`{}` **{}**", i, agent.name));
             if let Some(desc) = &agent.description {
                 msg.push_str(&format!(" - {}", desc));
@@ -393,19 +340,5 @@ fn show_agent_selection(
 
     msg.push_str("Enter a number to select, or `back` to return.\n");
 
-    send_message(config_agent_tx, session_id, msg);
-}
-
-/// Send a message to the user via ConfigAgent.
-fn send_message(
-    config_agent_tx: &UnboundedSender<ConfigAgentMessage>,
-    session_id: &SessionId,
-    text: impl Into<String>,
-) {
-    config_agent_tx
-        .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
-            session_id.clone(),
-            ConfigModeOutput::SendMessage(text.into()),
-        ))
-        .ok();
+    ctx.send_message(msg);
 }
