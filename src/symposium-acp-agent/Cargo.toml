@@ -51,6 +51,7 @@ flate2 = "1"
 tar = "0.4"
 zip = "2"
 fxhash.workspace = true
+regex = "1.12.2"
 
 [[example]]
 name = "vscodelm_cli"

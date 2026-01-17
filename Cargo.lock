@@ -3728,6 +3728,7 @@ dependencies = [
  "futures",
  "futures-concurrency",
  "fxhash",
+ "regex",
  "reqwest",
  "rmcp",
  "sacp",

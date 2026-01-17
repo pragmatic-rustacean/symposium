@@ -9,9 +9,11 @@ use crate::registry::{self, AgentListEntry};
 use crate::user_config::SymposiumUserConfig;
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
+use regex::Regex;
 use sacp::link::AgentToClient;
 use sacp::schema::SessionId;
 use sacp::JrConnectionCx;
+use std::sync::LazyLock;
 
 /// Messages sent to the config mode actor.
 pub enum ConfigModeInput {
@@ -234,29 +236,27 @@ fn handle_main_menu(
     }
 
     // Move command: "move X to Y"
-    if let Some(rest) = text_upper.strip_prefix("MOVE ") {
-        if let Some((from, to)) = parse_move_command(rest) {
-            if from < config.proxies.len() && to <= config.proxies.len() {
-                let proxy = config.proxies.remove(from);
-                let insert_at = if to > from { to - 1 } else { to };
-                send_message(
-                    config_agent_tx,
-                    session_id,
-                    format!("Moved `{}` from {} to {}.", proxy.name, from, to),
-                );
-                config
-                    .proxies
-                    .insert(insert_at.min(config.proxies.len()), proxy);
-                show_main_menu(config_agent_tx, session_id, config, available_agents);
-            } else {
-                send_message(config_agent_tx, session_id, "Invalid indices for move.");
-            }
-        } else {
+    static MOVE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)^move\s+(\d+)\s+to\s+(\d+)$").unwrap());
+
+    if let Some(caps) = MOVE_RE.captures(text) {
+        let from: usize = caps[1].parse().unwrap();
+        let to: usize = caps[2].parse().unwrap();
+
+        if from < config.proxies.len() && to <= config.proxies.len() {
+            let proxy = config.proxies.remove(from);
+            let insert_at = if to > from { to - 1 } else { to };
             send_message(
                 config_agent_tx,
                 session_id,
-                "Usage: `move X to Y` where X and Y are proxy indices.",
+                format!("Moved `{}` from {} to {}.", proxy.name, from, to),
             );
+            config
+                .proxies
+                .insert(insert_at.min(config.proxies.len()), proxy);
+            show_main_menu(config_agent_tx, session_id, config, available_agents);
+        } else {
+            send_message(config_agent_tx, session_id, "Invalid indices for move.");
         }
         return true;
     }
@@ -270,19 +270,6 @@ fn handle_main_menu(
     show_main_menu(config_agent_tx, session_id, config, available_agents);
     true
 }
-
-/// Parse "X to Y" from a move command.
-fn parse_move_command(rest: &str) -> Option<(usize, usize)> {
-    let parts: Vec<&str> = rest.split_whitespace().collect();
-    if parts.len() == 3 && parts[1].to_uppercase() == "TO" {
-        let from = parts[0].parse().ok()?;
-        let to = parts[2].parse().ok()?;
-        Some((from, to))
-    } else {
-        None
-    }
-}
-
 /// Handle input in the agent selection state.
 fn handle_select_agent(
     text: &str,
