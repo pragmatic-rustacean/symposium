@@ -160,8 +160,8 @@ impl ConfigModeActor {
         let text = text.trim();
         let text_upper = text.to_uppercase();
 
-        // Exit commands
-        if text_upper == "EXIT" || text_upper == "DONE" || text_upper == "QUIT" {
+        // Save and exit
+        if text_upper == "SAVE" {
             self.done();
             return false;
         }
@@ -297,7 +297,7 @@ impl ConfigModeActor {
         msg.push_str("  `A` or `AGENT` - Select a different agent\n");
         msg.push_str("  `0`, `1`, ... - Toggle proxy enabled/disabled\n");
         msg.push_str("  `move X to Y` - Reorder proxies\n");
-        msg.push_str("  `done` - Save and exit\n");
+        msg.push_str("  `save` - Save and exit\n");
         msg.push_str("  `cancel` - Exit without saving\n");
 
         self.send_message(msg);
