@@ -7,6 +7,16 @@ description = "Ferris MCP server - helpful tools for Rust development"
 repository = "https://github.com/symposium-dev/symposium"
 homepage = "https://symposium-dev.github.io/symposium/"
 
+[[bin]]
+name = "symposium-ferris"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[package.metadata.symposium]
+binary = "symposium-ferris"
+
 [dependencies]
 # Error handling
 thiserror = { workspace = true }
@@ -19,6 +29,7 @@ schemars = { workspace = true }
 
 # MCP server / ACP integration
 sacp = { workspace = true }
+sacp-tokio = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }

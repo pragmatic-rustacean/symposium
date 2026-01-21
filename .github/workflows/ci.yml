@@ -65,6 +65,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Install elizacp
+        run: cargo install --force elizacp
+
       - name: Run CI tests
         run: cargo ci test
 

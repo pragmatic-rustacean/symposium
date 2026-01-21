@@ -38,11 +38,10 @@ use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-mod config;
-
-use symposium_acp_agent::registry::{self, built_in_proxies};
+use symposium_acp_agent::registry;
 use symposium_acp_agent::symposium::{Symposium, SymposiumConfig};
 use symposium_acp_agent::vscodelm;
+use symposium_acp_agent::ConfigAgent;
 
 #[derive(Parser, Debug)]
 #[command(name = "symposium-acp-agent")]
@@ -158,6 +157,7 @@ fn setup_logging(log: Option<String>) {
         tracing_subscriber::fmt()
             .with_env_filter(EnvFilter::new(filter))
             .with_writer(std::io::stderr)
+            .with_ansi(false)
             .init();
     }
 }
@@ -213,58 +213,17 @@ async fn main() -> Result<()> {
 
         Command::Run { trace_dir, log } => {
             // Set up logging if requested
-            if let Some(filter) = &log {
-                use tracing_subscriber::EnvFilter;
-                tracing_subscriber::fmt()
-                    .with_env_filter(EnvFilter::new(filter))
-                    .with_writer(std::io::stderr)
-                    .init();
+            setup_logging(log);
+
+            // ConfigAgent handles both configured and unconfigured states:
+            // - If config exists: creates conductors and delegates sessions
+            // - If no config: runs initial setup wizard
+            // - Handles /symposium:config command for runtime configuration
+            let mut agent = ConfigAgent::new();
+            if let Some(dir) = trace_dir {
+                agent = agent.with_trace_dir(dir);
             }
-
-            match config::SymposiumUserConfig::load()? {
-                Some(user_config) => {
-                    // Run with the loaded configuration
-                    let proxy_names = user_config.enabled_proxies();
-                    let agent_args = user_config.agent_args()?;
-
-                    // The user config is currently just a set of (builtin) proxy names.
-                    let mut config = SymposiumConfig::new();
-                    if let Some(trace_dir) = trace_dir {
-                        config = config.trace_dir(trace_dir);
-                    }
-
-                    let possible_proxies = built_in_proxies()?;
-                    let mut proxies = vec![];
-                    for name in proxy_names {
-                        if let Some(entry) = possible_proxies.iter().find(|p| p.id == name) {
-                            let server = crate::registry::resolve_distribution(entry)
-                                .await
-                                .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
-                            let server = server
-                                .ok_or_else(|| sacp::Error::new(-32603, "Extension not found."))?;
-                            proxies.push(DynComponent::new(AcpAgent::new(server)));
-                        }
-                    }
-                    let agent = AcpAgent::from_args(&agent_args)?;
-
-                    tracing::debug!(
-                        "Starting in configured mode with agent: {:?}",
-                        agent.server()
-                    );
-
-                    Symposium::new(config, proxies)
-                        .with_agent(agent)
-                        .serve(sacp_tokio::Stdio::new())
-                        .await?;
-                }
-                None => {
-                    // No config - run configuration agent
-                    config::ConfigurationAgent::new()
-                        .await
-                        .serve(sacp_tokio::Stdio::new())
-                        .await?;
-                }
-            }
+            agent.serve(sacp_tokio::Stdio::new()).await?;
         }
 
         Command::Registry(registry_cmd) => match registry_cmd {

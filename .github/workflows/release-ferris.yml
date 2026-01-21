@@ -1,0 +1,16 @@
+name: Release Ferris
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    if: startsWith(github.ref_name, 'symposium-ferris-v')
+    permissions:
+      contents: write
+    uses: symposium-dev/package-agent-extension/.github/workflows/build.yml@v1
+    with:
+      manifest: src/symposium-ferris/Cargo.toml
+      musl: true
+    secrets: inherit

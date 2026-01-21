@@ -1,0 +1,291 @@
+//! Actor that owns and manages a conductor connection.
+//!
+//! This actor:
+//! - Spawns and initializes the conductor
+//! - Receives session messages from ConfigAgent via a channel
+//! - Forwards messages to the conductor
+//! - Forwards notifications from the conductor back to the client
+
+use super::ConfigAgentMessage;
+use crate::registry::{built_in_proxies, resolve_distribution};
+use crate::user_config::SymposiumUserConfig;
+use futures::channel::mpsc::UnboundedSender;
+use sacp::link::{AgentToClient, ClientToAgent, ProxyToConductor};
+use sacp::schema::{
+    InitializeRequest, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
+};
+use sacp::{DynComponent, JrConnectionCx, JrRequestCx, MessageCx};
+use sacp_conductor::{Conductor, McpBridgeMode};
+use sacp_tokio::AcpAgent;
+use std::path::PathBuf;
+use tokio::sync::{mpsc, oneshot};
+
+/// Messages that can be sent to the ConductorActor.
+pub enum ConductorMessage {
+    /// A new session request. The conductor will send NewSessionCreated to ConfigAgent.
+    NewSession {
+        request: NewSessionRequest,
+        request_cx: JrRequestCx<NewSessionResponse>,
+    },
+
+    /// A prompt request for a session.
+    Prompt {
+        request: PromptRequest,
+        request_cx: JrRequestCx<PromptResponse>,
+    },
+
+    /// Forward an arbitrary message to the conductor.
+    ForwardMessage { message: MessageCx },
+
+    /// Pause the conductor. It will stop processing messages until the returned
+    /// oneshot is dropped or receives a value.
+    ///
+    /// The sender provides a channel to receive the resume signal sender.
+    Pause {
+        /// Channel to send the resume signal sender back to the caller.
+        resume_tx_sender: oneshot::Sender<oneshot::Sender<()>>,
+    },
+}
+
+/// Handle for communicating with a ConductorActor.
+#[derive(Clone)]
+pub struct ConductorHandle {
+    tx: mpsc::Sender<ConductorMessage>,
+}
+
+impl ConductorHandle {
+    /// Spawn a new conductor actor for the given configuration.
+    ///
+    /// Returns a handle for sending messages to the actor.
+    pub async fn spawn(
+        config: &SymposiumUserConfig,
+        trace_dir: Option<&PathBuf>,
+        config_agent_tx: UnboundedSender<ConfigAgentMessage>,
+        client_cx: &JrConnectionCx<AgentToClient>,
+    ) -> Result<Self, sacp::Error> {
+        // Create the channel for receiving messages
+        let (tx, rx) = mpsc::channel(32);
+
+        let handle = Self { tx: tx.clone() };
+
+        client_cx.spawn(run_actor(
+            config.clone(),
+            trace_dir.cloned(),
+            config_agent_tx,
+            handle.clone(),
+            rx,
+        ))?;
+
+        Ok(handle)
+    }
+
+    /// Send a new session request to the conductor.
+    /// The conductor will send NewSessionCreated to ConfigAgent when done.
+    pub async fn send_new_session(
+        &self,
+        request: NewSessionRequest,
+        request_cx: JrRequestCx<NewSessionResponse>,
+    ) -> Result<(), sacp::Error> {
+        self.tx
+            .send(ConductorMessage::NewSession {
+                request,
+                request_cx,
+            })
+            .await
+            .map_err(|_| sacp::util::internal_error("Conductor actor closed"))
+    }
+
+    /// Send a prompt request to the conductor.
+    pub async fn send_prompt(
+        &self,
+        request: PromptRequest,
+        request_cx: JrRequestCx<PromptResponse>,
+    ) -> Result<(), sacp::Error> {
+        self.tx
+            .send(ConductorMessage::Prompt {
+                request,
+                request_cx,
+            })
+            .await
+            .map_err(|_| sacp::util::internal_error("Conductor actor closed"))
+    }
+
+    /// Forward an arbitrary message to the conductor.
+    pub async fn forward_message(&self, message: MessageCx) -> Result<(), sacp::Error> {
+        self.tx
+            .send(ConductorMessage::ForwardMessage { message })
+            .await
+            .map_err(|_| sacp::util::internal_error("Conductor actor closed"))
+    }
+
+    /// Pause the conductor. Returns a sender that, when dropped or sent to,
+    /// will resume the conductor.
+    ///
+    /// While paused, the conductor will not process any messages from the
+    /// downstream agent or accept new requests.
+    pub async fn pause(&self) -> Result<oneshot::Sender<()>, sacp::Error> {
+        let (resume_tx_sender, resume_tx_receiver) = oneshot::channel();
+
+        self.tx
+            .send(ConductorMessage::Pause { resume_tx_sender })
+            .await
+            .map_err(|_| sacp::util::internal_error("Conductor actor closed"))?;
+
+        resume_tx_receiver
+            .await
+            .map_err(|_| sacp::util::internal_error("Conductor actor closed"))
+    }
+}
+
+/// Build proxy components from names using the registry.
+async fn build_proxies(
+    proxy_names: Vec<String>,
+) -> Result<Vec<DynComponent<ProxyToConductor>>, sacp::Error> {
+    let possible_proxies =
+        built_in_proxies().map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
+
+    let mut proxies = vec![];
+    for name in &proxy_names {
+        if let Some(entry) = possible_proxies.iter().find(|p| p.id == *name) {
+            let server = resolve_distribution(entry)
+                .await
+                .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
+            let server = server.ok_or_else(|| {
+                sacp::Error::new(-32603, format!("Extension {} not found", name))
+            })?;
+            proxies.push(DynComponent::new(AcpAgent::new(server)));
+        } else {
+            tracing::warn!("Unknown proxy name: {}", name);
+        }
+    }
+
+    Ok(proxies)
+}
+
+/// The main actor loop.
+async fn run_actor(
+    config: SymposiumUserConfig,
+    _trace_dir: Option<PathBuf>,
+    config_agent_tx: UnboundedSender<ConfigAgentMessage>,
+    self_handle: ConductorHandle,
+    mut rx: mpsc::Receiver<ConductorMessage>,
+) -> Result<(), sacp::Error> {
+    // Build the symposium config
+    let proxy_names = config.enabled_proxies();
+    let agent_args = config
+        .agent_args()
+        .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
+
+    // TODO: Apply trace_dir to conductor when needed
+
+    let agent =
+        AcpAgent::from_args(&agent_args).map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
+
+    // Build the conductor
+    let conductor = Conductor::new_agent(
+        "symposium-conductor",
+        {
+            async move |init_req| {
+                tracing::info!("Building proxy chain with extensions: {:?}", proxy_names);
+                let proxies = build_proxies(proxy_names).await?;
+                Ok((init_req, proxies, DynComponent::new(agent)))
+            }
+        },
+        McpBridgeMode::default(),
+    );
+
+    // Connect to the conductor
+    ClientToAgent::builder()
+        .on_receive_message(
+            async |message_cx: MessageCx, _cx| {
+                // Incoming message from the conductor: forward via ConfigAgent to client
+                config_agent_tx
+                    .unbounded_send(ConfigAgentMessage::MessageToClient(message_cx))
+                    .map_err(|_| sacp::util::internal_error("ConfigAgent closed"))
+            },
+            sacp::on_receive_message!(),
+        )
+        .run_until(conductor, async |conductor_cx| {
+            // Initialize the conductor
+            let _init_response = conductor_cx
+                .send_request(InitializeRequest::new(
+                    sacp::schema::ProtocolVersion::LATEST,
+                ))
+                .block_task()
+                .await?;
+
+            while let Some(message) = rx.recv().await {
+                match message {
+                    ConductorMessage::NewSession {
+                        request,
+                        request_cx,
+                    } => {
+                        let config_agent_tx = config_agent_tx.clone();
+                        let self_handle = self_handle.clone();
+                        conductor_cx.send_request(request).on_receiving_result(
+                            async move |result| {
+                                match result {
+                                    Ok(response) => {
+                                        // Send to ConfigAgent so it can store the session mapping
+                                        config_agent_tx
+                                            .unbounded_send(ConfigAgentMessage::NewSessionCreated(
+                                                response,
+                                                self_handle,
+                                                request_cx,
+                                            ))
+                                            .map_err(|_| {
+                                                sacp::util::internal_error("ConfigAgent closed")
+                                            })
+                                    }
+                                    Err(e) => {
+                                        // Forward error directly to client
+                                        request_cx.respond_with_error(e)
+                                    }
+                                }
+                            },
+                        )?;
+                    }
+
+                    ConductorMessage::Prompt {
+                        request,
+                        request_cx,
+                    } => {
+                        if let Err(e) = conductor_cx
+                            .send_request(request)
+                            .forward_to_request_cx(request_cx)
+                        {
+                            tracing::error!("Failed to forward prompt to conductor: {}", e);
+                        }
+                    }
+
+                    ConductorMessage::ForwardMessage { message } => {
+                        if let Err(e) =
+                            conductor_cx.send_proxied_message_to(sacp::AgentPeer, message)
+                        {
+                            tracing::error!("Failed to forward message to conductor: {}", e);
+                        }
+                    }
+
+                    ConductorMessage::Pause { resume_tx_sender } => {
+                        // Create the resume channel
+                        let (resume_tx, resume_rx) = oneshot::channel::<()>();
+
+                        // Send the resume_tx back to the caller
+                        if resume_tx_sender.send(resume_tx).is_err() {
+                            tracing::warn!("Failed to send resume_tx - caller dropped");
+                            continue;
+                        }
+
+                        // Wait for resume signal (or channel drop)
+                        tracing::debug!("Conductor paused, waiting for resume");
+                        let _ = resume_rx.await;
+                        tracing::debug!("Conductor resumed");
+                    }
+                }
+            }
+
+            tracing::debug!("Conductor actor shutting down");
+            Ok(())
+        })
+        .await
+}

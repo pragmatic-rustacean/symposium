@@ -191,7 +191,7 @@ pub fn built_in_proxies() -> Result<Vec<RegistryEntry>> {
                     crate_name: "sparkle-mcp".to_string(),
                     version: None, // Use latest
                     binary: None,  // Auto-discover from crates.io
-                    args: vec![],
+                    args: vec!["--acp".to_string()],
                 }),
             },
         },
