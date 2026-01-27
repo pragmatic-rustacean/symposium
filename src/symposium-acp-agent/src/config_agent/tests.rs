@@ -1,10 +1,13 @@
 //! Tests for the ConfigAgent.
 
 use super::*;
-use expect_test::expect;
+use crate::recommendations::{Recommendation, Recommendations};
+use crate::registry::{ComponentSource, LocalDistribution};
+use crate::user_config::WorkspaceConfig;
 use sacp::link::ClientToAgent;
 use sacp::on_receive_notification;
 use sacp::schema::{ContentChunk, ProtocolVersion, TextContent};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -39,58 +42,62 @@ impl CollectedNotifications {
     }
 }
 
-/// Helper to write a test config file to a temp directory.
-fn write_config(dir: &TempDir, config: &SymposiumUserConfig) -> PathBuf {
-    let config_path = dir.path().join("config.jsonc");
-    config.save_to(&config_path).unwrap();
-    config_path
+/// Helper to write a workspace config to a temp directory (as the workspace path).
+fn write_workspace_config(workspace_path: &std::path::Path, config: &WorkspaceConfig) {
+    config.save(workspace_path).unwrap();
 }
 
-/// Create a config that uses elizacp as the backend.
-fn elizacp_config() -> SymposiumUserConfig {
-    SymposiumUserConfig {
-        // elizacp needs 'acp' subcommand to run as ACP agent
-        // --deterministic is a global flag that goes before the subcommand
-        agent: "elizacp --deterministic acp".to_string(),
-        proxies: vec![], // No proxies for simpler testing
+/// Create a config that uses elizacp as the backend agent.
+/// Uses the external elizacp binary (must be installed via `cargo install elizacp`).
+fn elizacp_config() -> WorkspaceConfig {
+    WorkspaceConfig::new(
+        ComponentSource::Local(LocalDistribution {
+            command: "elizacp".to_string(),
+            args: vec!["--deterministic".to_string(), "acp".to_string()],
+            env: BTreeMap::new(),
+        }),
+        vec![], // No extensions for simpler testing
+    )
+}
+
+/// Create test recommendations for testing initial setup flow.
+fn test_recommendations() -> Recommendations {
+    Recommendations {
+        extensions: vec![Recommendation {
+            source: ComponentSource::Builtin("ferris".to_string()),
+            when: None, // Always recommended
+        }],
     }
+}
+
+/// Default test agent for initial setup testing.
+fn test_default_agent() -> ComponentSource {
+    ComponentSource::Builtin("eliza".to_string())
 }
 
 // ============================================================================
 // Basic flow tests
 // ============================================================================
 
-/// Test that when no config exists, we get the initial setup flow with agent selection.
+/// Test that when no config exists, we get the initial setup flow using recommendations.
 #[tokio::test]
 async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
-    use crate::registry::AgentListEntry;
-
     let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.jsonc");
-    // Don't create the file - we want to test the "no config" path
+    let workspace_path = temp_dir.path().to_path_buf();
+    // Don't create the config file - we want to test the "no config" path
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
-    // Inject test agents so we don't hit the registry
-    let test_agents = vec![
-        AgentListEntry {
-            id: "claude-code".to_string(),
-            name: "Claude Code".to_string(),
-            description: Some("AI coding assistant".to_string()),
-            version: None,
-        },
-        AgentListEntry {
-            id: "gemini".to_string(),
-            name: "Gemini CLI".to_string(),
-            description: Some("Google's AI".to_string()),
-            version: None,
-        },
-    ];
+    // Use test recommendations
+    let recommendations = test_recommendations();
+
+    // Use a hardcoded default agent for testing (bypasses GlobalAgentConfig::load())
+    let default_agent = test_default_agent();
 
     let agent = ConfigAgent::new()
-        .with_config_path(&config_path)
-        .with_injected_agents(test_agents);
+        .with_recommendations(recommendations)
+        .with_default_agent(default_agent);
 
     ClientToAgent::builder()
         .on_receive_notification(
@@ -114,9 +121,9 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
                 .await?;
             assert_eq!(init_response.protocol_version, ProtocolVersion::LATEST);
 
-            // Request a new session - should trigger initial setup (config mode with agent selection)
+            // Request a new session - should trigger initial setup
             let session_response = cx
-                .send_request(NewSessionRequest::new("."))
+                .send_request(NewSessionRequest::new(&workspace_path))
                 .block_task()
                 .await?;
             let session_id = session_response.session_id;
@@ -124,29 +131,45 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
             // Give the async notification time to arrive
             tokio::time::sleep(Duration::from_millis(50)).await;
 
-            // Should have received the welcome message and agent selection menu
+            // Should have received the welcome message and config menu
             let text = notifications.lock().unwrap().text();
-            expect![[r#"
-                Welcome to Symposium!
+            assert!(
+                text.contains("Welcome to Symposium!"),
+                "Expected welcome message, got: {}",
+                text
+            );
+            assert!(
+                text.contains("Using your default agent"),
+                "Expected default agent message, got: {}",
+                text
+            );
+            assert!(
+                text.contains("Configuration created with recommended extensions"),
+                "Expected config creation message, got: {}",
+                text
+            );
+            assert!(
+                text.contains("# Configuration"),
+                "Expected config menu, got: {}",
+                text
+            );
+            assert!(
+                text.contains("eliza"),
+                "Expected eliza agent in config, got: {}",
+                text
+            );
+            assert!(
+                text.contains("ferris"),
+                "Expected ferris extension, got: {}",
+                text
+            );
 
-                No configuration found. Let's set up your AI agent.
-                # Select Agent
-
-                | # | Agent | Description |
-                |---|-------|-------------|
-                | 1 | Claude Code | AI coding assistant |
-                | 2 | Gemini CLI | Google's AI |
-
-                Enter a number to select, or `back` to return.
-            "#]]
-            .assert_eq(&text);
-
-            // Select an agent (Claude Code = 1, using 1-based indexing)
+            // Save the configuration
             notifications.lock().unwrap().clear();
             let prompt_response = cx
                 .send_request(PromptRequest::new(
                     session_id,
-                    vec![ContentBlock::Text(TextContent::new("1"))],
+                    vec![ContentBlock::Text(TextContent::new("save"))],
                 ))
                 .block_task()
                 .await?;
@@ -155,16 +178,16 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
             // Give the async notification time to arrive
             tokio::time::sleep(Duration::from_millis(50)).await;
 
-            // Should now show the main config menu with the selected agent
+            // Should have saved message
             let text = notifications.lock().unwrap().text();
             assert!(
-                text.contains("Agent set to"),
-                "Expected agent selection confirmation"
+                text.contains("Configuration saved"),
+                "Expected save confirmation"
             );
-            assert!(
-                text.contains("# Configuration"),
-                "Expected main menu after selection"
-            );
+
+            // Verify config was written
+            let loaded = WorkspaceConfig::load(&workspace_path).unwrap();
+            assert!(loaded.is_some(), "Config should have been saved");
 
             Ok(())
         })
@@ -172,19 +195,21 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
 }
 
 /// Test new session flow with valid config.
-/// This requires elizacp to be available, so we need to think about how to wire it up.
+/// This requires elizacp to be available.
 #[tokio::test]
 async fn test_new_session_with_config() -> Result<(), sacp::Error> {
     init_tracing();
 
     let temp_dir = TempDir::new().unwrap();
+    let workspace_path = temp_dir.path().to_path_buf();
     let config = elizacp_config();
-    let config_path = write_config(&temp_dir, &config);
+    write_workspace_config(&workspace_path, &config);
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
-    let agent = ConfigAgent::new().with_config_path(&config_path);
+    // Use empty recommendations to avoid triggering the diff prompt
+    let agent = ConfigAgent::new().with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
         .on_receive_notification(
@@ -217,7 +242,7 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
 
             // Request a new session - should delegate to conductor with elizacp
             let session_response = cx
-                .send_request(NewSessionRequest::new("."))
+                .send_request(NewSessionRequest::new(&workspace_path))
                 .block_task()
                 .await?;
             let session_id = session_response.session_id;
@@ -262,16 +287,15 @@ async fn test_config_mode_entry() -> Result<(), sacp::Error> {
     init_tracing();
 
     let temp_dir = TempDir::new().unwrap();
+    let workspace_path = temp_dir.path().to_path_buf();
     let config = elizacp_config();
-    let config_path = write_config(&temp_dir, &config);
+    write_workspace_config(&workspace_path, &config);
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
-    // Use injected agents to bypass registry fetch
-    let agent = ConfigAgent::new()
-        .with_config_path(&config_path)
-        .with_injected_agents(vec![]); // Empty list - no agents from registry
+    // Use empty recommendations to avoid triggering the diff prompt
+    let agent = ConfigAgent::new().with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
         .on_receive_notification(
@@ -295,7 +319,7 @@ async fn test_config_mode_entry() -> Result<(), sacp::Error> {
 
             // Create a session
             let session_response = cx
-                .send_request(NewSessionRequest::new("."))
+                .send_request(NewSessionRequest::new(&workspace_path))
                 .block_task()
                 .await?;
             let session_id = session_response.session_id;
@@ -314,20 +338,12 @@ async fn test_config_mode_entry() -> Result<(), sacp::Error> {
 
             // Should have received config mode welcome with menu
             let text = notifications.lock().unwrap().text();
-            expect![[r#"
-                # Configuration
-
-                * **Agent:** elizacp --deterministic acp
-                * **Extensions:**
-                    * (none configured)
-
-                # Commands
-
-                - `A` or `AGENT` - Select a different agent
-                - `save` - Save for future sessions
-                - `cancel` - Exit without saving
-            "#]]
-            .assert_eq(&text);
+            assert!(text.contains("# Configuration"), "Expected config menu");
+            assert!(text.contains("Workspace:"), "Expected workspace path");
+            assert!(text.contains("eliza"), "Expected eliza agent");
+            assert!(text.contains("(none configured)"), "Expected no extensions");
+            assert!(text.contains("save"), "Expected save command");
+            assert!(text.contains("cancel"), "Expected cancel command");
 
             Ok(())
         })

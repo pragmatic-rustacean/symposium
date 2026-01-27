@@ -7,8 +7,8 @@
 //! - Forwards notifications from the conductor back to the client
 
 use super::ConfigAgentMessage;
-use crate::registry::{built_in_proxies, resolve_distribution};
-use crate::user_config::SymposiumUserConfig;
+use crate::registry::ComponentSource;
+use crate::user_config::WorkspaceConfig;
 use futures::channel::mpsc::UnboundedSender;
 use sacp::link::{AgentToClient, ClientToAgent, ProxyToConductor};
 use sacp::schema::{
@@ -48,7 +48,7 @@ pub enum ConductorMessage {
 }
 
 /// Handle for communicating with a ConductorActor.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConductorHandle {
     tx: mpsc::Sender<ConductorMessage>,
 }
@@ -58,17 +58,21 @@ impl ConductorHandle {
     ///
     /// Returns a handle for sending messages to the actor.
     pub async fn spawn(
-        config: &SymposiumUserConfig,
+        workspace_path: PathBuf,
+        config: &WorkspaceConfig,
         trace_dir: Option<&PathBuf>,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         client_cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<Self, sacp::Error> {
+        tracing::debug!(?workspace_path, ?config, "ConductorHandle::spawn");
+
         // Create the channel for receiving messages
         let (tx, rx) = mpsc::channel(32);
 
         let handle = Self { tx: tx.clone() };
 
         client_cx.spawn(run_actor(
+            workspace_path,
             config.clone(),
             trace_dir.cloned(),
             config_agent_tx,
@@ -86,6 +90,8 @@ impl ConductorHandle {
         request: NewSessionRequest,
         request_cx: JrRequestCx<NewSessionResponse>,
     ) -> Result<(), sacp::Error> {
+        tracing::debug!(?request, "ConductorHandle::send_new_session");
+        
         self.tx
             .send(ConductorMessage::NewSession {
                 request,
@@ -112,6 +118,8 @@ impl ConductorHandle {
 
     /// Forward an arbitrary message to the conductor.
     pub async fn forward_message(&self, message: MessageCx) -> Result<(), sacp::Error> {
+        tracing::debug!(?message, "ConductorHandle::forward_message");
+
         self.tx
             .send(ConductorMessage::ForwardMessage { message })
             .await
@@ -124,6 +132,8 @@ impl ConductorHandle {
     /// While paused, the conductor will not process any messages from the
     /// downstream agent or accept new requests.
     pub async fn pause(&self) -> Result<oneshot::Sender<()>, sacp::Error> {
+        tracing::debug!("ConductorHandle::pause");
+        
         let (resume_tx_sender, resume_tx_receiver) = oneshot::channel();
 
         self.tx
@@ -137,26 +147,25 @@ impl ConductorHandle {
     }
 }
 
-/// Build proxy components from names using the registry.
+/// Build proxy components from ComponentSources.
 async fn build_proxies(
-    proxy_names: Vec<String>,
+    extension_sources: Vec<ComponentSource>,
 ) -> Result<Vec<DynComponent<ProxyToConductor>>, sacp::Error> {
-    let possible_proxies =
-        built_in_proxies().map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
-
     let mut proxies = vec![];
-    for name in &proxy_names {
-        if let Some(entry) = possible_proxies.iter().find(|p| p.id == *name) {
-            let server = resolve_distribution(entry)
-                .await
-                .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
-            let server = server.ok_or_else(|| {
-                sacp::Error::new(-32603, format!("Extension {} not found", name))
-            })?;
-            proxies.push(DynComponent::new(AcpAgent::new(server)));
-        } else {
-            tracing::warn!("Unknown proxy name: {}", name);
-        }
+    for source in &extension_sources {
+        tracing::debug!(extension = %source.display_name(), "Resolving extension");
+        let server = source.resolve().await.map_err(|e| {
+            tracing::error!(
+                extension = %source.display_name(),
+                error = %e,
+                "Failed to resolve extension"
+            );
+            sacp::Error::new(
+                -32603,
+                format!("Failed to resolve {}: {}", source.display_name(), e),
+            )
+        })?;
+        proxies.push(DynComponent::new(AcpAgent::new(server)));
     }
 
     Ok(proxies)
@@ -164,30 +173,40 @@ async fn build_proxies(
 
 /// The main actor loop.
 async fn run_actor(
-    config: SymposiumUserConfig,
+    workspace_path: PathBuf,
+    config: WorkspaceConfig,
     _trace_dir: Option<PathBuf>,
     config_agent_tx: UnboundedSender<ConfigAgentMessage>,
     self_handle: ConductorHandle,
     mut rx: mpsc::Receiver<ConductorMessage>,
 ) -> Result<(), sacp::Error> {
-    // Build the symposium config
-    let proxy_names = config.enabled_proxies();
-    let agent_args = config
-        .agent_args()
-        .map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
+    // Get enabled extensions
+    let extension_sources = config.enabled_extensions();
+
+    // Resolve the agent
+    let agent_server = config
+        .agent
+        .resolve()
+        .await
+        .map_err(|e| sacp::Error::new(-32603, format!("Failed to resolve agent: {}", e)))?;
 
     // TODO: Apply trace_dir to conductor when needed
 
-    let agent =
-        AcpAgent::from_args(&agent_args).map_err(|e| sacp::Error::new(-32603, e.to_string()))?;
+    let agent = AcpAgent::new(agent_server);
 
     // Build the conductor
     let conductor = Conductor::new_agent(
         "symposium-conductor",
         {
             async move |init_req| {
-                tracing::info!("Building proxy chain with extensions: {:?}", proxy_names);
-                let proxies = build_proxies(proxy_names).await?;
+                tracing::info!(
+                    "Building proxy chain with extensions: {:?}",
+                    extension_sources
+                        .iter()
+                        .map(|s| s.display_name())
+                        .collect::<Vec<_>>()
+                );
+                let proxies = build_proxies(extension_sources).await?;
                 Ok((init_req, proxies, DynComponent::new(agent)))
             }
         },
@@ -222,17 +241,19 @@ async fn run_actor(
                     } => {
                         let config_agent_tx = config_agent_tx.clone();
                         let self_handle = self_handle.clone();
+                        let workspace_path = workspace_path.clone();
                         conductor_cx.send_request(request).on_receiving_result(
                             async move |result| {
                                 match result {
                                     Ok(response) => {
                                         // Send to ConfigAgent so it can store the session mapping
                                         config_agent_tx
-                                            .unbounded_send(ConfigAgentMessage::NewSessionCreated(
+                                            .unbounded_send(ConfigAgentMessage::NewSessionCreated {
                                                 response,
-                                                self_handle,
+                                                conductor: self_handle,
+                                                workspace_path,
                                                 request_cx,
-                                            ))
+                                            })
                                             .map_err(|_| {
                                                 sacp::util::internal_error("ConfigAgent closed")
                                             })

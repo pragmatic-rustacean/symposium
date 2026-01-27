@@ -5,14 +5,16 @@
 //! text-based menu system.
 
 use super::ConfigAgentMessage;
-use crate::registry::{self, AgentListEntry};
-use crate::user_config::SymposiumUserConfig;
+use crate::recommendations::{RecommendationDiff, WorkspaceRecommendations};
+use crate::registry::{list_agents_with_sources, ComponentSource};
+use crate::user_config::{GlobalAgentConfig, WorkspaceConfig};
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
 use regex::Regex;
 use sacp::link::AgentToClient;
 use sacp::schema::SessionId;
 use sacp::JrConnectionCx;
+use std::path::PathBuf;
 use std::sync::LazyLock;
 use tokio::sync::oneshot;
 
@@ -33,6 +35,7 @@ pub enum ConfigModeInput {
 }
 
 /// Messages sent from the config mode actor back to ConfigAgent.
+#[derive(Debug)]
 pub enum ConfigModeOutput {
     /// Send this text to the user.
     SendMessage(String),
@@ -40,7 +43,7 @@ pub enum ConfigModeOutput {
     /// Configuration is complete - save and exit.
     Done {
         /// The final configuration to save.
-        config: SymposiumUserConfig,
+        config: WorkspaceConfig,
     },
 
     /// User cancelled - exit without saving.
@@ -53,57 +56,134 @@ pub struct ConfigModeHandle {
     tx: mpsc::Sender<ConfigModeInput>,
 }
 
+/// The starting configuration
+enum StartingConfiguration {
+    /// An existing workspace configuration
+    ExistingConfig(WorkspaceConfig),
+
+    /// A new workspace
+    NewWorkspace(WorkspaceRecommendations),
+}
+
 impl ConfigModeHandle {
     /// Spawn a new config mode actor.
     ///
     /// Returns a handle for sending input to the actor.
     ///
-    /// If `config` is None, this is initial setup - the actor will go straight
-    /// to agent selection and create a default config after selection.
+    /// If `config` is None, this is initial setup - the actor will use
+    /// recommendations to create the initial configuration.
     ///
     /// The `resume_tx` is an optional oneshot sender that, when dropped, will
     /// signal the conductor to resume processing. If provided, it will be
     /// dropped when the actor exits (either save or cancel).
-    #[allow(dead_code)] // Convenience wrapper, kept for future non-test use
-    pub fn spawn(
-        config: Option<SymposiumUserConfig>,
+    ///
+    /// The `default_agent_override` is used for testing - if Some, it bypasses
+    /// the GlobalAgentConfig::load() and uses this agent for initial setup.
+    pub fn spawn_reconfig(
+        config: WorkspaceConfig,
+        workspace_path: PathBuf,
+        default_agent_override: Option<ComponentSource>,
+        session_id: SessionId,
+        config_agent_tx: UnboundedSender<ConfigAgentMessage>,
+        resume_tx: oneshot::Sender<()>,
+        cx: &JrConnectionCx<AgentToClient>,
+    ) -> Result<Self, sacp::Error> {
+        Self::spawn_inner(
+            StartingConfiguration::ExistingConfig(config),
+            workspace_path,
+            None,
+            default_agent_override,
+            session_id,
+            config_agent_tx,
+            Some(resume_tx),
+            cx,
+        )
+    }
+
+    /// Spawn a new config mode actor.
+    ///
+    /// Returns a handle for sending input to the actor.
+    ///
+    /// If `config` is None, this is initial setup - the actor will use
+    /// recommendations to create the initial configuration.
+    ///
+    /// The `resume_tx` is an optional oneshot sender that, when dropped, will
+    /// signal the conductor to resume processing. If provided, it will be
+    /// dropped when the actor exits (either save or cancel).
+    ///
+    /// The `default_agent_override` is used for testing - if Some, it bypasses
+    /// the GlobalAgentConfig::load() and uses this agent for initial setup.
+    pub fn spawn_initial_config(
+        workspace_path: PathBuf,
+        recommendations: WorkspaceRecommendations,
+        default_agent_override: Option<ComponentSource>,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         resume_tx: Option<oneshot::Sender<()>>,
         cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<Self, sacp::Error> {
-        Self::spawn_with_agents(config, session_id, config_agent_tx, resume_tx, cx, None)
+        Self::spawn_inner(
+            StartingConfiguration::NewWorkspace(recommendations),
+            workspace_path,
+            None,
+            default_agent_override,
+            session_id,
+            config_agent_tx,
+            resume_tx,
+            cx,
+        )
     }
 
-    /// Spawn a new config mode actor with a pre-populated agent list.
+    /// Spawn a config mode actor in diff-only mode.
     ///
-    /// If `config` is None, this is initial setup - the actor will go straight
-    /// to agent selection and create a default config after selection.
-    ///
-    /// If `agents` is Some, skips the registry fetch and uses the provided list.
-    /// This is useful for testing.
-    pub fn spawn_with_agents(
-        config: Option<SymposiumUserConfig>,
+    /// This is used when starting a new session with an existing config.
+    /// The actor will only handle the recommendation diff prompt, then send
+    /// `DiffCompleted` or `DiffCancelled` instead of showing the main menu.
+    pub fn spawn_with_recommendations(
+        mut config: WorkspaceConfig,
+        workspace_path: PathBuf,
+        diff: RecommendationDiff,
+        session_id: SessionId,
+        config_agent_tx: UnboundedSender<ConfigAgentMessage>,
+        cx: &JrConnectionCx<AgentToClient>,
+    ) -> Result<Self, sacp::Error> {
+        diff.apply(&mut config);
+        Self::spawn_inner(
+            StartingConfiguration::ExistingConfig(config),
+            workspace_path,
+            Some(diff),
+            None,
+            session_id,
+            config_agent_tx,
+            None, // No resume_tx for diff-only mode
+            cx,
+        )
+    }
+
+    fn spawn_inner(
+        config: StartingConfiguration,
+        workspace_path: PathBuf,
+        diff: Option<RecommendationDiff>,
+        default_agent_override: Option<ComponentSource>,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
         resume_tx: Option<oneshot::Sender<()>>,
         cx: &JrConnectionCx<AgentToClient>,
-        agents: Option<Vec<AgentListEntry>>,
     ) -> Result<Self, sacp::Error> {
         let (tx, rx) = mpsc::channel(32);
         let handle = Self { tx };
 
         let actor = ConfigModeActor {
-            config,
+            workspace_path,
+            diff: diff.unwrap_or_default(),
+            default_agent_override,
             session_id,
             config_agent_tx,
             rx,
-            available_agents: Vec::new(),
-            injected_agents: agents,
             _resume_tx: resume_tx,
         };
 
-        cx.spawn(actor.run())?;
+        cx.spawn(actor.run(config))?;
 
         Ok(handle)
     }
@@ -117,17 +197,26 @@ impl ConfigModeHandle {
     }
 }
 
+/// Result of handling the recommendation diff prompt.
+enum DiffResult {
+    /// Save the updated configuration and exit.
+    Save,
+    /// Go to the main menu
+    Config,
+}
+
 /// The config mode actor state.
 struct ConfigModeActor {
-    /// Current configuration. None means initial setup (no config exists yet).
-    /// When None, we go straight to agent selection and create a default config.
-    config: Option<SymposiumUserConfig>,
+    /// The workspace this configuration is for.
+    workspace_path: PathBuf,
+    /// Diff of the current config vs recommendations.
+    diff: RecommendationDiff,
+    /// Override for the global agent config. If Some, bypasses GlobalAgentConfig::load().
+    /// Used for testing.
+    default_agent_override: Option<ComponentSource>,
     session_id: SessionId,
     config_agent_tx: UnboundedSender<ConfigAgentMessage>,
     rx: mpsc::Receiver<ConfigModeInput>,
-    available_agents: Vec<AgentListEntry>,
-    /// If Some, use these agents instead of fetching from registry.
-    injected_agents: Option<Vec<AgentListEntry>>,
     /// When dropped, signals the conductor to resume. We never send to this,
     /// just hold it until the actor exits.
     _resume_tx: Option<oneshot::Sender<()>>,
@@ -135,80 +224,205 @@ struct ConfigModeActor {
 
 impl ConfigModeActor {
     /// Main entry point - runs the actor.
-    async fn run(mut self) -> Result<(), sacp::Error> {
-        // Use injected agents if provided, otherwise fetch from registry
-        if let Some(agents) = self.injected_agents.take() {
-            self.available_agents = agents;
-        } else {
-            match registry::list_agents().await {
-                Ok(agents) => self.available_agents = agents,
-                Err(e) => self.send_message(format!("Warning: Failed to fetch registry: {}", e)),
-            }
-        }
+    async fn run(mut self, config: StartingConfiguration) -> Result<(), sacp::Error> {
+        // If no config exists (initial setup), we need to set up
+        let mut config = match config {
+            StartingConfiguration::ExistingConfig(config) => config,
+            StartingConfiguration::NewWorkspace(recommendations) => {
+                self.send_message("Welcome to Symposium!\n\n");
 
-        // If no config exists (initial setup), go straight to agent selection
-        let mut config = match self.config.take() {
-            Some(config) => config,
-            None => {
-                self.send_message(
-                    "Welcome to Symposium!\n\n\
-                     No configuration found. Let's set up your AI agent.\n",
-                );
-                match self.initial_agent_selection().await {
-                    Some(config) => config,
-                    None => {
-                        // User cancelled during initial setup
-                        self.cancelled();
-                        return Ok(());
+                // Check for global agent config (or use override for testing)
+                let global_agent = if let Some(agent) = self.default_agent_override.take() {
+                    Some(agent)
+                } else {
+                    match GlobalAgentConfig::load() {
+                        Ok(Some(global)) => Some(global.agent),
+                        Ok(None) => None,
+                        Err(e) => {
+                            tracing::warn!("Failed to load global agent config: {}", e);
+                            None
+                        }
                     }
-                }
+                };
+
+                let agent = match global_agent {
+                    Some(agent) => {
+                        self.send_message(&format!(
+                            "Using your default agent: **{}**\n\n",
+                            agent.display_name()
+                        ));
+                        agent
+                    }
+                    None => {
+                        // No global agent - need to select one
+                        self.send_message("No default agent configured. Let's choose one.\n\n");
+                        match self.select_agent().await {
+                            Some(agent) => {
+                                // Save as global default
+                                if let Err(e) = GlobalAgentConfig::new(agent.clone()).save() {
+                                    tracing::warn!("Failed to save global agent config: {}", e);
+                                }
+                                agent
+                            }
+                            None => {
+                                self.send_message("Agent selection cancelled.\n");
+                                self.cancelled();
+                                return Ok(());
+                            }
+                        }
+                    }
+                };
+
+                // Create config with selected agent and recommended extensions
+                let extensions = recommendations.extension_sources();
+
+                self.send_message("Configuration created with recommended extensions.\n\n");
+                WorkspaceConfig::new(agent, extensions)
             }
         };
 
+        // If there is an active diff, present it first
+        if !self.diff.is_empty() {
+            match self.present_diff(&mut config).await {
+                DiffResult::Save => {
+                    self.done(&config);
+                    return Ok(());
+                }
+                DiffResult::Config => { /* continue to main menu */ }
+            }
+        }
+
+        // Enter main menu loop
         self.main_menu_loop(&mut config).await;
 
         Ok(())
     }
 
-    /// Initial agent selection (when no config exists).
-    /// Returns the new config if an agent was selected, None if cancelled.
-    async fn initial_agent_selection(&mut self) -> Option<SymposiumUserConfig> {
-        loop {
-            self.show_agent_selection();
+    /// Handle the recommendation diff prompt.
+    /// Returns the result of the interaction.
+    async fn present_diff(&mut self, config: &mut WorkspaceConfig) -> DiffResult {
+        self.send_message("# Recommendations have changed\n\n");
 
+        if !self.diff.to_add.is_empty() {
+            self.send_message("The following extensions are now recommended:\n");
+            for extension in &self.diff.to_remove {
+                self.send_message(&format!(
+                    "- {} [{}]\n",
+                    extension.source.display_name(),
+                    extension.when.explain_why_added().join(", ")
+                ));
+            }
+            self.send_message("\n");
+        }
+
+        if !self.diff.to_remove.is_empty() {
+            self.send_message(
+                "The following extensions were removed as they are no longer recommended:\n",
+            );
+            for extension in &self.diff.to_remove {
+                self.send_message(&format!(
+                    "- {} [{}]\n",
+                    extension.source.display_name(),
+                    extension.when.explain_why_stale().join(", ")
+                ));
+            }
+            self.send_message("\n");
+        }
+
+        loop {
+            self.send_message("Options:\n");
+            self.send_message("* SAVE to accept the new recommendations\n");
+            self.send_message("* IGNORE to disable all new recommendations\n");
+            self.send_message(
+                "* CONFIG to select which extensions to enable or make other changes\n",
+            );
+
+            let Some(input) = self.next_input().await else {
+                return DiffResult::Config;
+            };
+
+            let input = input.trim();
+            let input_upper = input.to_uppercase();
+
+            match &input_upper[..] {
+                "SAVE" => return DiffResult::Save,
+
+                "IGNORE" => {
+                    // Disable all the new recommended extensions
+                    for to_add in &self.diff.to_add {
+                        for extension in &mut config.extensions {
+                            if extension.source == to_add.source {
+                                extension.enabled = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    return DiffResult::Save;
+                }
+
+                "CONFIG" => {
+                    return DiffResult::Config;
+                }
+
+                _ => {
+                    self.send_message(&format!("Unknown command: `{}`\n", input));
+                }
+            }
+
+            // Unknown input
+        }
+    }
+
+    /// Prompt user to select an agent from the registry.
+    /// Returns None if cancelled or an error occurred.
+    async fn select_agent(&mut self) -> Option<ComponentSource> {
+        self.send_message("Fetching available agents...\n");
+
+        let agents = match list_agents_with_sources().await {
+            Ok(agents) => agents,
+            Err(e) => {
+                self.send_message(&format!("Failed to fetch agents: {}\n", e));
+                return None;
+            }
+        };
+
+        if agents.is_empty() {
+            self.send_message("No agents available.\n");
+            return None;
+        }
+
+        // Show the list
+        let mut msg = String::new();
+        msg.push_str("# Select an Agent\n\n");
+        for (i, (entry, _)) in agents.iter().enumerate() {
+            msg.push_str(&format!("{}. {}\n", i + 1, entry.name));
+        }
+        msg.push_str("\nEnter a number to select, or `cancel` to abort:\n");
+        self.send_message(msg);
+
+        // Wait for selection
+        loop {
             let Some(input) = self.next_input().await else {
                 return None;
             };
+            let input = input.trim();
 
-            let text = input.trim();
-            let text_upper = text.to_uppercase();
-
-            // Cancel/back exits without creating config
-            if text_upper == "CANCEL" || text_upper == "BACK" {
+            if input.eq_ignore_ascii_case("cancel") {
                 return None;
             }
 
-            // Select by index (1-based)
-            if let Ok(display_index) = text.parse::<usize>() {
-                if display_index >= 1 && display_index <= self.available_agents.len() {
-                    let agent = &self.available_agents[display_index - 1];
-                    self.send_message(format!("Agent set to `{}`.", agent.name));
-                    // Create default config with selected agent
-                    return Some(SymposiumUserConfig::with_agent(&agent.id));
-                } else if self.available_agents.is_empty() {
-                    self.send_message("No agents available.");
-                } else {
-                    self.send_message(format!(
-                        "Invalid index. Please enter 1-{}.",
-                        self.available_agents.len()
-                    ));
+            if let Ok(idx) = input.parse::<usize>() {
+                if idx >= 1 && idx <= agents.len() {
+                    let (entry, source) = &agents[idx - 1];
+                    self.send_message(&format!("Selected: **{}**\n\n", entry.name));
+                    return Some(source.clone());
                 }
-                continue;
             }
 
-            self.send_message(format!(
-                "Unknown input: `{}`. Enter a number or `cancel`.",
-                text
+            self.send_message(&format!(
+                "Invalid selection. Please enter 1-{} or `cancel`.\n",
+                agents.len()
             ));
         }
     }
@@ -232,7 +446,7 @@ impl ConfigModeActor {
     }
 
     /// Signal that configuration is done (save and exit).
-    fn done(&self, config: &SymposiumUserConfig) {
+    fn done(&self, config: &WorkspaceConfig) {
         self.config_agent_tx
             .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
                 self.session_id.clone(),
@@ -244,7 +458,8 @@ impl ConfigModeActor {
     }
 
     /// Signal that configuration was cancelled.
-    fn cancelled(&self) {
+    fn cancelled(&mut self) {
+        // Regular config mode cancellation
         self.config_agent_tx
             .unbounded_send(ConfigAgentMessage::ConfigModeOutput(
                 self.session_id.clone(),
@@ -254,7 +469,7 @@ impl ConfigModeActor {
     }
 
     /// Main menu loop.
-    async fn main_menu_loop(&mut self, config: &mut SymposiumUserConfig) {
+    async fn main_menu_loop(&mut self, config: &mut WorkspaceConfig) {
         self.show_main_menu(config);
 
         loop {
@@ -274,7 +489,7 @@ impl ConfigModeActor {
     async fn handle_main_menu_input(
         &mut self,
         text: &str,
-        config: &mut SymposiumUserConfig,
+        config: &mut WorkspaceConfig,
     ) -> MenuAction {
         let text = text.trim();
         let text_upper = text.to_uppercase();
@@ -291,79 +506,61 @@ impl ConfigModeActor {
             return MenuAction::Done;
         }
 
-        // Agent selection
+        // Change agent
         if text_upper == "A" || text_upper == "AGENT" {
-            self.agent_selection_loop(config).await;
+            if let Some(new_agent) = self.select_agent().await {
+                config.agent = new_agent.clone();
+                // Also update global agent config
+                if let Err(e) = GlobalAgentConfig::new(new_agent.clone()).save() {
+                    tracing::warn!("Failed to save global agent config: {}", e);
+                    self.send_message(&format!("Note: Could not save as default agent: {}\n", e));
+                } else {
+                    self.send_message("Updated default agent for future workspaces.\n");
+                }
+                return MenuAction::Redisplay;
+            }
+            // Selection was cancelled, just redisplay menu
             return MenuAction::Redisplay;
         }
 
         // Toggle extension by index (1-based)
         if let Ok(display_index) = text.parse::<usize>() {
-            if display_index >= 1 && display_index <= config.proxies.len() {
-                let index = display_index - 1; // Convert to 0-based
-                config.proxies[index].enabled = !config.proxies[index].enabled;
-                let proxy = &config.proxies[index];
-                let status = if proxy.enabled { "enabled" } else { "disabled" };
-                self.send_message(format!("Extension `{}` is now {}.", proxy.name, status));
+            if display_index >= 1 && display_index <= config.extensions.len() {
+                let extension = &mut config.extensions[display_index - 1];
+                extension.enabled = !extension.enabled;
+                self.send_message(format!(
+                    "Extension `{}` is now {}.",
+                    extension.source.display_name(),
+                    if extension.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    },
+                ));
                 return MenuAction::Redisplay;
-            } else if config.proxies.is_empty() {
+            } else if config.extensions.is_empty() {
                 self.send_message("No extensions configured.");
                 return MenuAction::Continue;
             } else {
                 self.send_message(format!(
                     "Invalid index. Please enter 1-{}.",
-                    config.proxies.len()
+                    config.extensions.len()
                 ));
                 return MenuAction::Continue;
             }
         }
 
         // Move command: "move X to Y" or "move X to start/end" (1-based)
+        // Note: Since we use BTreeMap, ordering is by key, not insertion order.
+        // For now, we don't support reordering - could add a priority field later.
         static MOVE_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?i)^move\s+(\d+)\s+to\s+(\d+|start|end)$").unwrap());
 
-        if let Some(caps) = MOVE_RE.captures(text) {
-            let from_display: usize = caps[1].parse().unwrap();
-            let to_str = caps[2].to_lowercase();
-
-            // Convert 1-based display index to 0-based
-            if from_display < 1 || from_display > config.proxies.len() {
-                self.send_message(format!(
-                    "Invalid source index. Please enter 1-{}.",
-                    config.proxies.len()
-                ));
-                return MenuAction::Continue;
-            }
-            let from = from_display - 1;
-
-            // Parse destination: number (1-based), "start", or "end"
-            let to = if to_str == "start" {
-                0
-            } else if to_str == "end" {
-                config.proxies.len() - 1
-            } else {
-                let to_display: usize = to_str.parse().unwrap();
-                if to_display < 1 || to_display > config.proxies.len() {
-                    self.send_message(format!(
-                        "Invalid destination index. Please enter 1-{}, `start`, or `end`.",
-                        config.proxies.len()
-                    ));
-                    return MenuAction::Continue;
-                }
-                to_display - 1
-            };
-
-            let proxy = config.proxies.remove(from);
-            let insert_at = if to > from { to } else { to };
-            config
-                .proxies
-                .insert(insert_at.min(config.proxies.len()), proxy.clone());
-            self.send_message(format!(
-                "Moved `{}` to position {}.",
-                proxy.name,
-                insert_at + 1
-            ));
-            return MenuAction::Redisplay;
+        if MOVE_RE.captures(text).is_some() {
+            self.send_message(
+                "Extension reordering is not yet supported with the new config format.",
+            );
+            return MenuAction::Continue;
         }
 
         // Unknown command
@@ -371,81 +568,29 @@ impl ConfigModeActor {
         MenuAction::Continue
     }
 
-    /// Agent selection loop (from main menu, config already exists).
-    async fn agent_selection_loop(&mut self, config: &mut SymposiumUserConfig) {
-        loop {
-            self.show_agent_selection();
-
-            let Some(input) = self.next_input().await else {
-                return;
-            };
-
-            let text = input.trim();
-            let text_upper = text.to_uppercase();
-
-            // Back to main menu
-            if text_upper == "BACK" || text_upper == "CANCEL" {
-                return;
-            }
-
-            // Select by index (1-based)
-            if let Ok(display_index) = text.parse::<usize>() {
-                if display_index >= 1 && display_index <= self.available_agents.len() {
-                    let agent = &self.available_agents[display_index - 1];
-                    config.agent = agent.id.clone();
-                    self.send_message(format!("Agent set to `{}`.", agent.name));
-                    return;
-                } else if self.available_agents.is_empty() {
-                    self.send_message("No agents available.");
-                } else {
-                    self.send_message(format!(
-                        "Invalid index. Please enter 1-{}.",
-                        self.available_agents.len()
-                    ));
-                }
-                continue;
-            }
-
-            self.send_message(format!(
-                "Unknown input: `{}`. Enter a number or `back`.",
-                text
-            ));
-        }
-    }
-
     /// Show the main menu.
-    fn show_main_menu(&self, config: &SymposiumUserConfig) {
+    fn show_main_menu(&self, config: &WorkspaceConfig) {
         let mut msg = String::new();
         msg.push_str("# Configuration\n\n");
+        msg.push_str(&format!(
+            "Workspace: `{}`\n\n",
+            self.workspace_path.display()
+        ));
 
         // Current agent
-        let agent_name = if config.agent.is_empty() {
-            "(not configured)".to_string()
-        } else {
-            self.available_agents
-                .iter()
-                .find(|a| a.id == config.agent)
-                .map(|a| a.name.clone())
-                .unwrap_or_else(|| config.agent.clone())
-        };
+        msg.push_str(&format!("* **Agent:** {}\n", config.agent.display_name()));
 
-        msg.push_str(&format!("* **Agent:** {}\n", agent_name));
-
-        // Extensions (formerly proxies)
+        // Extensions
         msg.push_str("* **Extensions:**\n");
-        if config.proxies.is_empty() {
+        if config.extensions.is_empty() {
             msg.push_str("    * (none configured)\n");
         } else {
-            for (i, proxy) in config.proxies.iter().enumerate() {
-                // 1-based indexing for display
-                let display_index = i + 1;
-                if proxy.enabled {
-                    msg.push_str(&format!("    {}. {}\n", display_index, proxy.name));
+            for (extension, display_index) in config.extensions.iter().zip(1..) {
+                let name = extension.source.display_name();
+                if extension.enabled {
+                    msg.push_str(&format!("    {}. {}\n", display_index, name));
                 } else {
-                    msg.push_str(&format!(
-                        "    {}. ~~{}~~ (disabled)\n",
-                        display_index, proxy.name
-                    ));
+                    msg.push_str(&format!("    {}. ~~{}~~ (disabled)\n", display_index, name));
                 }
             }
         }
@@ -453,41 +598,16 @@ impl ConfigModeActor {
 
         // Commands
         msg.push_str("# Commands\n\n");
-        msg.push_str("- `A` or `AGENT` - Select a different agent\n");
-        if !config.proxies.is_empty() {
-            msg.push_str("- `1`, `2`, ... - Toggle extension enabled/disabled\n");
-            msg.push_str("- `move X to Y` - Reorder extensions (or `start`/`end`)\n");
+        msg.push_str("- `a` - Change agent\n");
+        match config.extensions.len() {
+            0 => {}
+            1 => msg.push_str(&format!("- `1` - Toggle extension enabled/disabled\n")),
+            n => msg.push_str(&format!(
+                "- `1` through `{n}` - Toggle extension enabled/disabled\n"
+            )),
         }
         msg.push_str("- `save` - Save for future sessions\n");
         msg.push_str("- `cancel` - Exit without saving\n");
-
-        self.send_message(msg);
-    }
-
-    /// Show the agent selection menu.
-    fn show_agent_selection(&self) {
-        let mut msg = String::new();
-        msg.push_str("# Select Agent\n\n");
-
-        if self.available_agents.is_empty() {
-            msg.push_str("No agents available.\n\n");
-        } else {
-            // Table header
-            msg.push_str("| # | Agent | Description |\n");
-            msg.push_str("|---|-------|-------------|\n");
-            for (i, agent) in self.available_agents.iter().enumerate() {
-                // 1-based indexing for display
-                let display_index = i + 1;
-                let description = agent.description.as_deref().unwrap_or("");
-                msg.push_str(&format!(
-                    "| {} | {} | {} |\n",
-                    display_index, agent.name, description
-                ));
-            }
-            msg.push('\n');
-        }
-
-        msg.push_str("Enter a number to select, or `back` to return.\n");
 
         self.send_message(msg);
     }
