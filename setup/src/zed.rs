@@ -43,14 +43,14 @@ pub fn configure_zed(symposium_acp_agent_path: &Path, dry_run: bool) -> Result<(
     });
 
     if dry_run {
-        println!("   Would add configuration for: Symposium");
+        println!("   Would add configuration for: SymposiumDev");
         println!(
             "   Config: {}",
             serde_json::to_string_pretty(&agent_config).unwrap()
         );
     } else {
-        println!("   Adding configuration for: Symposium");
-        agent_servers.insert("Symposium".to_string(), agent_config);
+        println!("   Adding configuration for: SymposiumDev");
+        agent_servers.insert("SymposiumDev".to_string(), agent_config);
 
         // Write back configuration
         let formatted =
