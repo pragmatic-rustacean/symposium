@@ -51,6 +51,31 @@ struct Cli {
     command: Command,
 }
 
+/// Shared logging and tracing options
+#[derive(clap::Args, Debug, Clone)]
+struct LoggingOptions {
+    /// Enable trace logging to the specified directory.
+    /// Traces are written as timestamped .jsons files viewable with sacp-trace-viewer.
+    #[arg(long)]
+    trace_dir: Option<PathBuf>,
+
+    /// Enable logging to stderr. Accepts a level (error, warn, info, debug, trace)
+    /// or a RUST_LOG-style filter string (e.g., "sacp=debug,symposium=trace").
+    #[arg(long)]
+    log: Option<String>,
+
+    /// Write logs to a timestamped file in the specified directory instead of stderr.
+    #[arg(long)]
+    log_dir: Option<PathBuf>,
+}
+
+impl LoggingOptions {
+    /// Set up logging based on the options.
+    fn setup(&self) {
+        setup_logging(self.log.clone(), self.log_dir.clone());
+    }
+}
+
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Run Symposium with a specific agent configuration
@@ -70,15 +95,8 @@ enum Command {
         #[arg(long)]
         agent: Option<String>,
 
-        /// Enable trace logging to the specified directory.
-        /// Traces are written as timestamped .jsons files viewable with sacp-trace-viewer.
-        #[arg(long)]
-        trace_dir: Option<PathBuf>,
-
-        /// Enable logging to stderr. Accepts a level (error, warn, info, debug, trace)
-        /// or a RUST_LOG-style filter string (e.g., "sacp=debug,symposium=trace").
-        #[arg(long)]
-        log: Option<String>,
+        #[command(flatten)]
+        logging: LoggingOptions,
     },
 
     /// Run the built-in Eliza agent (useful for testing)
@@ -96,14 +114,8 @@ enum Command {
     /// If no configuration file exists, runs an interactive setup wizard
     /// to help create one.
     Run {
-        /// Enable trace logging to the specified directory
-        #[arg(long)]
-        trace_dir: Option<PathBuf>,
-
-        /// Enable logging to stderr. Accepts a level (error, warn, info, debug, trace)
-        /// or a RUST_LOG-style filter string.
-        #[arg(long)]
-        log: Option<String>,
+        #[command(flatten)]
+        logging: LoggingOptions,
     },
 
     /// Agent registry commands (for tooling integration)
@@ -151,14 +163,42 @@ fn build_proxies(raw_proxies: Vec<String>) -> Result<Vec<DynComponent<ProxyToCon
 }
 
 /// Set up logging if requested.
-fn setup_logging(log: Option<String>) {
+fn setup_logging(log: Option<String>, log_dir: Option<PathBuf>) {
     if let Some(filter) = &log {
         use tracing_subscriber::EnvFilter;
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::new(filter))
-            .with_writer(std::io::stderr)
-            .with_ansi(false)
-            .init();
+
+        if let Some(dir) = log_dir {
+            // Create timestamped log file in the specified directory
+            let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+            let log_path = dir.join(format!("{}.log", timestamp));
+
+            // Ensure directory exists
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                eprintln!("Failed to create log directory {:?}: {}", dir, e);
+                return;
+            }
+
+            let file = match std::fs::File::create(&log_path) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("Failed to create log file {:?}: {}", log_path, e);
+                    return;
+                }
+            };
+
+            tracing_subscriber::fmt()
+                .with_env_filter(EnvFilter::new(filter))
+                .with_writer(file)
+                .with_ansi(false)
+                .init();
+        } else {
+            // Write to stderr
+            tracing_subscriber::fmt()
+                .with_env_filter(EnvFilter::new(filter))
+                .with_writer(std::io::stderr)
+                .with_ansi(false)
+                .init();
+        }
     }
 }
 
@@ -170,17 +210,16 @@ async fn main() -> Result<()> {
         Command::RunWith {
             proxies,
             agent,
-            trace_dir,
-            log,
+            logging,
         } => {
+            logging.setup();
+
             let proxies = build_proxies(proxies)?;
             let mut config = SymposiumConfig::new();
 
-            if let Some(trace_dir) = trace_dir {
+            if let Some(trace_dir) = logging.trace_dir {
                 config = config.trace_dir(trace_dir);
             }
-
-            setup_logging(log);
 
             let symposium = Symposium::new(config, proxies);
             if let Some(agent_spec) = agent {
@@ -211,16 +250,15 @@ async fn main() -> Result<()> {
             vscodelm::serve_stdio(trace_dir).await?;
         }
 
-        Command::Run { trace_dir, log } => {
-            // Set up logging if requested
-            setup_logging(log);
+        Command::Run { logging } => {
+            logging.setup();
 
             // ConfigAgent handles both configured and unconfigured states:
             // - If config exists: creates conductors and delegates sessions
             // - If no config: runs initial setup wizard
             // - Handles /symposium:config command for runtime configuration
             let mut agent = ConfigAgent::new();
-            if let Some(dir) = trace_dir {
+            if let Some(dir) = logging.trace_dir {
                 agent = agent.with_trace_dir(dir);
             }
             agent.serve(sacp_tokio::Stdio::new()).await?;
