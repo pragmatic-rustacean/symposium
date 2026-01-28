@@ -195,6 +195,9 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
                 "Expected save confirmation"
             );
 
+            // Give time for the config to be written
+            tokio::time::sleep(Duration::from_millis(250)).await;
+
             // Verify config was written
             let loaded = WorkspaceConfig::load(&config_paths, &workspace_path).unwrap();
             assert!(loaded.is_some(), "Config should have been saved");
