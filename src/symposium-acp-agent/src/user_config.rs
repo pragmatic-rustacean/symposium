@@ -109,8 +109,7 @@ impl ConfigPaths {
     ///
     /// Location: `<root>/config/<encoded-workspace-path>/config.json`
     pub fn workspace_config_path(&self, workspace_path: &Path) -> PathBuf {
-        self.workspace_config_dir(workspace_path)
-            .join("config.json")
+        self.workspace_config_dir(workspace_path).join("config.json")
     }
 
     /// Ensure the workspace config directory exists and return the config path.
@@ -143,6 +142,7 @@ impl ConfigPaths {
         self.ensure_dir(&path)?;
         Ok(path)
     }
+
 }
 
 /// Extension configuration entry
@@ -203,15 +203,10 @@ impl GlobalAgentConfig {
         if !path.exists() {
             return Ok(None);
         }
-        let content = std::fs::read_to_string(&path).with_context(|| {
-            format!("Failed to read global agent config from {}", path.display())
-        })?;
-        let config: Self = serde_json::from_str(&content).with_context(|| {
-            format!(
-                "Failed to parse global agent config from {}",
-                path.display()
-            )
-        })?;
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read global agent config from {}", path.display()))?;
+        let config: Self = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse global agent config from {}", path.display()))?;
         Ok(Some(config))
     }
 
@@ -220,9 +215,8 @@ impl GlobalAgentConfig {
     pub fn save(&self, config_paths: &ConfigPaths) -> Result<()> {
         let path = config_paths.ensure_global_agent_config_dir()?;
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, &content).with_context(|| {
-            format!("Failed to write global agent config to {}", path.display())
-        })?;
+        std::fs::write(&path, &content)
+            .with_context(|| format!("Failed to write global agent config to {}", path.display()))?;
         Ok(())
     }
 }
@@ -250,9 +244,7 @@ impl WorkspaceConfig {
     /// Returns None if the file doesn't exist.
     pub fn load(config_paths: &ConfigPaths, workspace_path: &Path) -> Result<Option<Self>> {
         let path = config_paths.workspace_config_path(workspace_path);
-        eprintln!("loading from {}", path.display());
         if !path.exists() {
-            eprintln!(" -> {} does not exist", path.display());
             return Ok(None);
         }
         let content = std::fs::read_to_string(&path)
@@ -267,7 +259,6 @@ impl WorkspaceConfig {
     pub fn save(&self, config_paths: &ConfigPaths, workspace_path: &Path) -> Result<()> {
         let path = config_paths.ensure_workspace_config_dir(workspace_path)?;
         let content = serde_json::to_string_pretty(self)?;
-        eprintln!("writing to {}", path.display());
         std::fs::write(&path, &content)
             .with_context(|| format!("Failed to write workspace config to {}", path.display()))?;
         Ok(())
@@ -293,7 +284,10 @@ fn encode_path(path: &Path) -> String {
     let path_str = path.to_string_lossy();
 
     // Get the last path component (or "root" for paths like "/")
-    let last_component = path.file_name().and_then(|s| s.to_str()).unwrap_or("root");
+    let last_component = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("root");
 
     // Hash the full path
     let mut hasher = Sha256::new();
@@ -428,15 +422,8 @@ mod tests {
         let encoded = encode_path(&path);
 
         // Should be in format: last_component-truncated_sha256_hash
-        assert!(
-            encoded.starts_with("my-project-"),
-            "Should start with last component"
-        );
-        assert_eq!(
-            encoded.len(),
-            "my-project-".len() + 16,
-            "Hash should be 16 hex chars"
-        );
+        assert!(encoded.starts_with("my-project-"), "Should start with last component");
+        assert_eq!(encoded.len(), "my-project-".len() + 16, "Hash should be 16 hex chars");
 
         // Same path should produce same encoding
         let encoded2 = encode_path(&path);
