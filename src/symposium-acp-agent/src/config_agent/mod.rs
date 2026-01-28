@@ -15,7 +15,7 @@ mod tests;
 
 use crate::recommendations::{Recommendations, WorkspaceRecommendations};
 use crate::registry::ComponentSource;
-use crate::user_config::WorkspaceConfig;
+use crate::user_config::{ConfigPaths, WorkspaceConfig};
 use conductor_actor::ConductorHandle;
 use config_mode_actor::{ConfigModeHandle, ConfigModeOutput};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
@@ -86,18 +86,37 @@ pub struct ConfigAgent {
     /// Override for recommendations (for testing). If None, loads builtin recommendations.
     recommendations_override: Option<Recommendations>,
 
-    /// Override for the default agent (for testing). If set, bypasses GlobalAgentConfig::load().
+    /// Override for the default agent (for testing). If set, bypasses GlobalAgentConfig loading.
     default_agent_override: Option<ComponentSource>,
+
+    /// Configuration paths (where to read/write config files).
+    config_paths: ConfigPaths,
 }
 
 impl ConfigAgent {
-    /// Create a new ConfigAgent.
-    pub fn new() -> Self {
+    /// Create a new ConfigAgent using the default config location (`~/.symposium`).
+    ///
+    /// Returns an error if the home directory cannot be determined.
+    pub fn new() -> anyhow::Result<Self> {
+        Ok(Self {
+            sessions: Default::default(),
+            trace_dir: None,
+            recommendations_override: None,
+            default_agent_override: None,
+            config_paths: ConfigPaths::default_location()?,
+        })
+    }
+
+    /// Create a new ConfigAgent with a custom config paths.
+    ///
+    /// Useful for tests to isolate configuration from the user's home.
+    pub fn with_config_paths(config_paths: ConfigPaths) -> Self {
         Self {
             sessions: Default::default(),
             trace_dir: None,
             recommendations_override: None,
             default_agent_override: None,
+            config_paths,
         }
     }
 
@@ -123,7 +142,7 @@ impl ConfigAgent {
 
     /// Load configuration for a workspace from disk.
     fn load_config(&self, workspace_path: &Path) -> anyhow::Result<Option<WorkspaceConfig>> {
-        WorkspaceConfig::load(workspace_path)
+        self.config_paths.load_workspace_config(workspace_path)
     }
 
     /// Load recommendations, using override if set, otherwise loading builtin.
@@ -238,7 +257,7 @@ impl ConfigAgent {
                 };
 
                 // Save the configuration
-                if let Err(e) = config.save(&workspace_path) {
+                if let Err(e) = self.config_paths.save_workspace_config(&workspace_path, &config) {
                     cx.send_notification(SessionNotification::new(
                         session_id.clone(),
                         SessionUpdate::AgentMessageChunk(ContentChunk::new(
@@ -363,6 +382,7 @@ impl ConfigAgent {
             // Spawn the config mode actor with None config (triggers initial setup)
             let actor_handle = ConfigModeHandle::spawn_initial_config(
                 workspace_path.clone(),
+                self.config_paths.clone(),
                 workspace_recs,
                 self.default_agent_override.clone(),
                 session_id.clone(),
@@ -402,6 +422,7 @@ impl ConfigAgent {
                 let actor_handle = ConfigModeHandle::spawn_with_recommendations(
                     config,
                     workspace_path.clone(),
+                    self.config_paths.clone(),
                     diff,
                     session_id.clone(),
                     config_agent_tx.clone(),
@@ -465,6 +486,7 @@ impl ConfigAgent {
             Some(current_config) => ConfigModeHandle::spawn_reconfig(
                 current_config,
                 workspace_path.clone(),
+                self.config_paths.clone(),
                 self.default_agent_override.clone(),
                 session_id.clone(),
                 config_agent_tx.clone(),
@@ -476,6 +498,7 @@ impl ConfigAgent {
                 let workspace_recs = self.recommendations_for_workspace(&workspace_path);
                 ConfigModeHandle::spawn_initial_config(
                     workspace_path.clone(),
+                    self.config_paths.clone(),
                     workspace_recs,
                     self.default_agent_override.clone(),
                     session_id.clone(),
@@ -703,12 +726,6 @@ pub enum ConfigAgentMessage {
 
     /// Output from a config mode actor.
     ConfigModeOutput(SessionId, ConfigModeOutput),
-}
-
-impl Default for ConfigAgent {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl Component<AgentToClient> for ConfigAgent {

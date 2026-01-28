@@ -41,7 +41,7 @@ use std::str::FromStr;
 use symposium_acp_agent::recommendations::Recommendations;
 use symposium_acp_agent::registry;
 use symposium_acp_agent::symposium::{Symposium, SymposiumConfig};
-use symposium_acp_agent::user_config::{GlobalAgentConfig, WorkspaceConfig};
+use symposium_acp_agent::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceConfig};
 use symposium_acp_agent::vscodelm;
 use symposium_acp_agent::ConfigAgent;
 
@@ -275,7 +275,7 @@ async fn main() -> Result<()> {
             // - If config exists: creates conductors and delegates sessions
             // - If no config: runs initial setup wizard
             // - Handles /symposium:config command for runtime configuration
-            let mut agent = ConfigAgent::new();
+            let mut agent = ConfigAgent::new()?;
             if let Some(dir) = logging.trace_dir {
                 agent = agent.with_trace_dir(dir);
             }
@@ -322,6 +322,7 @@ async fn main() -> Result<()> {
             agent,
             no_extensions,
         } => {
+            let config_paths = ConfigPaths::default_location()?;
             let agent = registry::lookup_agent_source(&agent).await?;
 
             let extensions = if no_extensions {
@@ -333,10 +334,10 @@ async fn main() -> Result<()> {
             };
 
             let config = WorkspaceConfig::new(agent.clone(), extensions);
-            config.save(&workspace)?;
+            config_paths.save_workspace_config(&workspace, &config)?;
 
             // Also save as global default
-            GlobalAgentConfig::new(agent).save()?;
+            config_paths.save_global_agent_config(&GlobalAgentConfig::new(agent))?;
 
             eprintln!("Initialized config for {}", workspace.display());
         }

@@ -3,11 +3,12 @@
 use super::*;
 use crate::recommendations::{Recommendation, Recommendations};
 use crate::registry::{ComponentSource, LocalDistribution};
-use crate::user_config::WorkspaceConfig;
+use crate::user_config::{ConfigPaths, WorkspaceConfig};
 use sacp::link::ClientToAgent;
 use sacp::on_receive_notification;
 use sacp::schema::{ContentChunk, ProtocolVersion, TextContent};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -42,9 +43,15 @@ impl CollectedNotifications {
     }
 }
 
-/// Helper to write a workspace config to a temp directory (as the workspace path).
-fn write_workspace_config(workspace_path: &std::path::Path, config: &WorkspaceConfig) {
-    config.save(workspace_path).unwrap();
+/// Helper to write a workspace config using the given ConfigPaths.
+fn write_workspace_config(
+    config_paths: &ConfigPaths,
+    workspace_path: &std::path::Path,
+    config: &WorkspaceConfig,
+) {
+    config_paths
+        .save_workspace_config(workspace_path, config)
+        .unwrap();
 }
 
 /// Create a config that uses elizacp as the backend agent.
@@ -82,8 +89,12 @@ fn test_default_agent() -> ComponentSource {
 /// Test that when no config exists, we get the initial setup flow using recommendations.
 #[tokio::test]
 async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
-    let temp_dir = TempDir::new().unwrap();
-    let workspace_path = temp_dir.path().to_path_buf();
+    // Use a temp dir for ConfigPaths (isolates from real ~/.symposium)
+    let config_temp_dir = TempDir::new().unwrap();
+    let config_paths = ConfigPaths::with_root(config_temp_dir.path());
+
+    // Use a fake workspace path (doesn't need to exist on disk for this test)
+    let workspace_path = PathBuf::from("/fake/workspace");
     // Don't create the config file - we want to test the "no config" path
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
@@ -92,10 +103,10 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
     // Use test recommendations
     let recommendations = test_recommendations();
 
-    // Use a hardcoded default agent for testing (bypasses GlobalAgentConfig::load())
+    // Use a hardcoded default agent for testing (bypasses global agent config loading)
     let default_agent = test_default_agent();
 
-    let agent = ConfigAgent::new()
+    let agent = ConfigAgent::with_config_paths(config_paths.clone())
         .with_recommendations(recommendations)
         .with_default_agent(default_agent);
 
@@ -186,7 +197,7 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
             );
 
             // Verify config was written
-            let loaded = WorkspaceConfig::load(&workspace_path).unwrap();
+            let loaded = config_paths.load_workspace_config(&workspace_path).unwrap();
             assert!(loaded.is_some(), "Config should have been saved");
 
             Ok(())
@@ -200,16 +211,21 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
 async fn test_new_session_with_config() -> Result<(), sacp::Error> {
     init_tracing();
 
-    let temp_dir = TempDir::new().unwrap();
-    let workspace_path = temp_dir.path().to_path_buf();
+    // Use a temp dir for ConfigPaths (isolates from real ~/.symposium)
+    let config_temp_dir = TempDir::new().unwrap();
+    let config_paths = ConfigPaths::with_root(config_temp_dir.path());
+
+    // Use a fake workspace path
+    let workspace_path = PathBuf::from("/fake/workspace");
     let config = elizacp_config();
-    write_workspace_config(&workspace_path, &config);
+    write_workspace_config(&config_paths, &workspace_path, &config);
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
     // Use empty recommendations to avoid triggering the diff prompt
-    let agent = ConfigAgent::new().with_recommendations(Recommendations::empty());
+    let agent = ConfigAgent::with_config_paths(config_paths)
+        .with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
         .on_receive_notification(
@@ -286,16 +302,21 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
 async fn test_config_mode_entry() -> Result<(), sacp::Error> {
     init_tracing();
 
-    let temp_dir = TempDir::new().unwrap();
-    let workspace_path = temp_dir.path().to_path_buf();
+    // Use a temp dir for ConfigPaths (isolates from real ~/.symposium)
+    let config_temp_dir = TempDir::new().unwrap();
+    let config_paths = ConfigPaths::with_root(config_temp_dir.path());
+
+    // Use a fake workspace path
+    let workspace_path = PathBuf::from("/fake/workspace");
     let config = elizacp_config();
-    write_workspace_config(&workspace_path, &config);
+    write_workspace_config(&config_paths, &workspace_path, &config);
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
     // Use empty recommendations to avoid triggering the diff prompt
-    let agent = ConfigAgent::new().with_recommendations(Recommendations::empty());
+    let agent = ConfigAgent::with_config_paths(config_paths)
+        .with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
         .on_receive_notification(

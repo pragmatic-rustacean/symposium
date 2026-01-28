@@ -7,7 +7,7 @@
 use super::ConfigAgentMessage;
 use crate::recommendations::{RecommendationDiff, WorkspaceRecommendations};
 use crate::registry::{list_agents_with_sources, ComponentSource};
-use crate::user_config::{GlobalAgentConfig, WorkspaceConfig};
+use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceConfig};
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
 use regex::Regex;
@@ -66,22 +66,20 @@ enum StartingConfiguration {
 }
 
 impl ConfigModeHandle {
-    /// Spawn a new config mode actor.
+    /// Spawn a new config mode actor for reconfiguration.
     ///
     /// Returns a handle for sending input to the actor.
     ///
-    /// If `config` is None, this is initial setup - the actor will use
-    /// recommendations to create the initial configuration.
-    ///
-    /// The `resume_tx` is an optional oneshot sender that, when dropped, will
-    /// signal the conductor to resume processing. If provided, it will be
-    /// dropped when the actor exits (either save or cancel).
+    /// The `resume_tx` is a oneshot sender that, when dropped, will
+    /// signal the conductor to resume processing. It will be dropped
+    /// when the actor exits (either save or cancel).
     ///
     /// The `default_agent_override` is used for testing - if Some, it bypasses
-    /// the GlobalAgentConfig::load() and uses this agent for initial setup.
+    /// loading the global agent config.
     pub fn spawn_reconfig(
         config: WorkspaceConfig,
         workspace_path: PathBuf,
+        config_paths: ConfigPaths,
         default_agent_override: Option<ComponentSource>,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
@@ -91,6 +89,7 @@ impl ConfigModeHandle {
         Self::spawn_inner(
             StartingConfiguration::ExistingConfig(config),
             workspace_path,
+            config_paths,
             None,
             default_agent_override,
             session_id,
@@ -100,21 +99,22 @@ impl ConfigModeHandle {
         )
     }
 
-    /// Spawn a new config mode actor.
+    /// Spawn a new config mode actor for initial configuration.
     ///
     /// Returns a handle for sending input to the actor.
     ///
-    /// If `config` is None, this is initial setup - the actor will use
-    /// recommendations to create the initial configuration.
+    /// This is for initial setup - the actor will use recommendations
+    /// to create the initial configuration.
     ///
     /// The `resume_tx` is an optional oneshot sender that, when dropped, will
     /// signal the conductor to resume processing. If provided, it will be
     /// dropped when the actor exits (either save or cancel).
     ///
     /// The `default_agent_override` is used for testing - if Some, it bypasses
-    /// the GlobalAgentConfig::load() and uses this agent for initial setup.
+    /// loading the global agent config.
     pub fn spawn_initial_config(
         workspace_path: PathBuf,
+        config_paths: ConfigPaths,
         recommendations: WorkspaceRecommendations,
         default_agent_override: Option<ComponentSource>,
         session_id: SessionId,
@@ -125,6 +125,7 @@ impl ConfigModeHandle {
         Self::spawn_inner(
             StartingConfiguration::NewWorkspace(recommendations),
             workspace_path,
+            config_paths,
             None,
             default_agent_override,
             session_id,
@@ -142,6 +143,7 @@ impl ConfigModeHandle {
     pub fn spawn_with_recommendations(
         mut config: WorkspaceConfig,
         workspace_path: PathBuf,
+        config_paths: ConfigPaths,
         diff: RecommendationDiff,
         session_id: SessionId,
         config_agent_tx: UnboundedSender<ConfigAgentMessage>,
@@ -151,6 +153,7 @@ impl ConfigModeHandle {
         Self::spawn_inner(
             StartingConfiguration::ExistingConfig(config),
             workspace_path,
+            config_paths,
             Some(diff),
             None,
             session_id,
@@ -163,6 +166,7 @@ impl ConfigModeHandle {
     fn spawn_inner(
         config: StartingConfiguration,
         workspace_path: PathBuf,
+        config_paths: ConfigPaths,
         diff: Option<RecommendationDiff>,
         default_agent_override: Option<ComponentSource>,
         session_id: SessionId,
@@ -175,6 +179,7 @@ impl ConfigModeHandle {
 
         let actor = ConfigModeActor {
             workspace_path,
+            config_paths,
             diff: diff.unwrap_or_default(),
             default_agent_override,
             session_id,
@@ -209,9 +214,11 @@ enum DiffResult {
 struct ConfigModeActor {
     /// The workspace this configuration is for.
     workspace_path: PathBuf,
+    /// Configuration paths (where to read/write config files).
+    config_paths: ConfigPaths,
     /// Diff of the current config vs recommendations.
     diff: RecommendationDiff,
-    /// Override for the global agent config. If Some, bypasses GlobalAgentConfig::load().
+    /// Override for the global agent config. If Some, bypasses loading global agent config.
     /// Used for testing.
     default_agent_override: Option<ComponentSource>,
     session_id: SessionId,
@@ -235,7 +242,7 @@ impl ConfigModeActor {
                 let global_agent = if let Some(agent) = self.default_agent_override.take() {
                     Some(agent)
                 } else {
-                    match GlobalAgentConfig::load() {
+                    match self.config_paths.load_global_agent_config() {
                         Ok(Some(global)) => Some(global.agent),
                         Ok(None) => None,
                         Err(e) => {
@@ -259,7 +266,10 @@ impl ConfigModeActor {
                         match self.select_agent().await {
                             Some(agent) => {
                                 // Save as global default
-                                if let Err(e) = GlobalAgentConfig::new(agent.clone()).save() {
+                                let global_config = GlobalAgentConfig::new(agent.clone());
+                                if let Err(e) =
+                                    self.config_paths.save_global_agent_config(&global_config)
+                                {
                                     tracing::warn!("Failed to save global agent config: {}", e);
                                 }
                                 agent
@@ -511,7 +521,8 @@ impl ConfigModeActor {
             if let Some(new_agent) = self.select_agent().await {
                 config.agent = new_agent.clone();
                 // Also update global agent config
-                if let Err(e) = GlobalAgentConfig::new(new_agent.clone()).save() {
+                let global_config = GlobalAgentConfig::new(new_agent.clone());
+                if let Err(e) = self.config_paths.save_global_agent_config(&global_config) {
                     tracing::warn!("Failed to save global agent config: {}", e);
                     self.send_message(&format!("Note: Could not save as default agent: {}\n", e));
                 } else {

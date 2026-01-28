@@ -12,6 +12,148 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+// ============================================================================
+// ConfigPaths - the root configuration directory
+// ============================================================================
+
+/// Manages paths to Symposium configuration files.
+///
+/// By default, configuration is stored under `~/.symposium/`. Tests can
+/// provide a custom root directory to avoid modifying the user's home.
+#[derive(Debug, Clone)]
+pub struct ConfigPaths {
+    /// Root directory for all Symposium configuration (e.g., `~/.symposium`).
+    root: PathBuf,
+}
+
+impl ConfigPaths {
+    /// Create a ConfigPaths using the default location (`~/.symposium`).
+    pub fn default_location() -> Result<Self> {
+        let home = dirs::home_dir().context("Could not determine home directory")?;
+        Ok(Self {
+            root: home.join(".symposium"),
+        })
+    }
+
+    /// Create a ConfigPaths with a custom root directory.
+    ///
+    /// Useful for tests to isolate configuration from the user's home.
+    pub fn with_root(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    /// Get the root directory (e.g., `~/.symposium`).
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    // ------------------------------------------------------------------------
+    // Global agent config paths
+    // ------------------------------------------------------------------------
+
+    /// Get the path to the global agent config file.
+    ///
+    /// Location: `<root>/config/agent.json`
+    pub fn global_agent_config_path(&self) -> PathBuf {
+        self.root.join("config").join("agent.json")
+    }
+
+    /// Load the global agent config. Returns None if it doesn't exist.
+    pub fn load_global_agent_config(&self) -> Result<Option<GlobalAgentConfig>> {
+        let path = self.global_agent_config_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read global agent config from {}", path.display()))?;
+        let config: GlobalAgentConfig = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse global agent config from {}", path.display()))?;
+        Ok(Some(config))
+    }
+
+    /// Save the global agent config.
+    pub fn save_global_agent_config(&self, config: &GlobalAgentConfig) -> Result<()> {
+        let path = self.global_agent_config_path();
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("Failed to create config directory {}", dir.display()))?;
+        }
+        let content = serde_json::to_string_pretty(config)?;
+        std::fs::write(&path, content)
+            .with_context(|| format!("Failed to write global agent config to {}", path.display()))?;
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------------
+    // Workspace config paths
+    // ------------------------------------------------------------------------
+
+    /// Get the config directory for a workspace.
+    ///
+    /// Location: `<root>/config/<encoded-workspace-path>/`
+    pub fn workspace_config_dir(&self, workspace_path: &Path) -> PathBuf {
+        let encoded = encode_path(workspace_path);
+        self.root.join("config").join(encoded)
+    }
+
+    /// Get the config file path for a workspace.
+    ///
+    /// Location: `<root>/config/<encoded-workspace-path>/config.json`
+    pub fn workspace_config_path(&self, workspace_path: &Path) -> PathBuf {
+        self.workspace_config_dir(workspace_path).join("config.json")
+    }
+
+    /// Load config for a workspace. Returns None if config doesn't exist.
+    pub fn load_workspace_config(&self, workspace_path: &Path) -> Result<Option<WorkspaceConfig>> {
+        let path = self.workspace_config_path(workspace_path);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read config from {}", path.display()))?;
+        let config: WorkspaceConfig = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse config from {}", path.display()))?;
+        Ok(Some(config))
+    }
+
+    /// Save config for a workspace.
+    pub fn save_workspace_config(
+        &self,
+        workspace_path: &Path,
+        config: &WorkspaceConfig,
+    ) -> Result<()> {
+        let path = self.workspace_config_path(workspace_path);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("Failed to create config directory {}", dir.display()))?;
+        }
+        let content = serde_json::to_string_pretty(config)?;
+        std::fs::write(&path, content)
+            .with_context(|| format!("Failed to write config to {}", path.display()))?;
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------------
+    // Legacy config paths
+    // ------------------------------------------------------------------------
+
+    /// Get the legacy config file path: `<root>/config.jsonc`
+    pub fn legacy_config_path(&self) -> PathBuf {
+        self.root.join("config.jsonc")
+    }
+
+    /// Load legacy config. Returns None if the config file doesn't exist.
+    pub fn load_legacy_config(&self) -> Result<Option<SymposiumUserConfig>> {
+        let path = self.legacy_config_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&path)?;
+        let config: SymposiumUserConfig = serde_jsonc::from_str(&content)?;
+        Ok(Some(config))
+    }
+}
+
 /// Extension configuration entry
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ExtensionConfig {
@@ -62,38 +204,6 @@ impl GlobalAgentConfig {
     pub fn new(agent: ComponentSource) -> Self {
         Self { agent }
     }
-
-    /// Get the path to the global agent config file
-    pub fn path() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        Ok(home.join(".symposium").join("config").join("agent.json"))
-    }
-
-    /// Load the global agent config. Returns None if it doesn't exist.
-    pub fn load() -> Result<Option<Self>> {
-        let path = Self::path()?;
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read global agent config from {}", path.display()))?;
-        let config: Self = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse global agent config from {}", path.display()))?;
-        Ok(Some(config))
-    }
-
-    /// Save the global agent config
-    pub fn save(&self) -> Result<()> {
-        let path = Self::path()?;
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)
-                .with_context(|| format!("Failed to create config directory {}", dir.display()))?;
-        }
-        let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, content)
-            .with_context(|| format!("Failed to write global agent config to {}", path.display()))?;
-        Ok(())
-    }
 }
 
 // ============================================================================
@@ -113,44 +223,6 @@ impl WorkspaceConfig {
             .collect();
 
         Self { agent, extensions }
-    }
-
-    /// Get the config directory for a workspace
-    pub fn workspace_config_dir(workspace_path: &Path) -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        let encoded = encode_path(workspace_path);
-        Ok(home.join(".symposium").join("config").join(encoded))
-    }
-
-    /// Get the config file path for a workspace
-    pub fn config_path(workspace_path: &Path) -> Result<PathBuf> {
-        Ok(Self::workspace_config_dir(workspace_path)?.join("config.json"))
-    }
-
-    /// Load config for a workspace. Returns None if config doesn't exist.
-    pub fn load(workspace_path: &Path) -> Result<Option<Self>> {
-        let path = Self::config_path(workspace_path)?;
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read config from {}", path.display()))?;
-        let config: Self = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse config from {}", path.display()))?;
-        Ok(Some(config))
-    }
-
-    /// Save config for a workspace
-    pub fn save(&self, workspace_path: &Path) -> Result<()> {
-        let path = Self::config_path(workspace_path)?;
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)
-                .with_context(|| format!("Failed to create config directory {}", dir.display()))?;
-        }
-        let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, content)
-            .with_context(|| format!("Failed to write config to {}", path.display()))?;
-        Ok(())
     }
 
     /// Get enabled extension sources in order
@@ -375,17 +447,39 @@ mod tests {
     #[test]
     fn test_workspace_config_save_load_roundtrip() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let workspace_path = temp_dir.path();
+        let config_paths = ConfigPaths::with_root(temp_dir.path());
+        let workspace_path = PathBuf::from("/some/workspace");
 
         let agent = ComponentSource::Builtin("eliza".to_string());
         let extensions = vec![ComponentSource::Builtin("ferris".to_string())];
         let config = WorkspaceConfig::new(agent.clone(), extensions);
 
         // Save
-        config.save(workspace_path).unwrap();
+        config_paths
+            .save_workspace_config(&workspace_path, &config)
+            .unwrap();
 
         // Load
-        let loaded = WorkspaceConfig::load(workspace_path).unwrap().unwrap();
+        let loaded = config_paths
+            .load_workspace_config(&workspace_path)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(config, loaded);
+    }
+
+    #[test]
+    fn test_global_agent_config_save_load_roundtrip() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_paths = ConfigPaths::with_root(temp_dir.path());
+
+        let config = GlobalAgentConfig::new(ComponentSource::Builtin("eliza".to_string()));
+
+        // Save
+        config_paths.save_global_agent_config(&config).unwrap();
+
+        // Load
+        let loaded = config_paths.load_global_agent_config().unwrap().unwrap();
 
         assert_eq!(config, loaded);
     }
