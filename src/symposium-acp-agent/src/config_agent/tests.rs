@@ -106,8 +106,8 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
     // Use test recommendations
     let recommendations = test_recommendations();
 
-    let agent = ConfigAgent::with_config_paths(config_paths.clone())
-        .with_recommendations(recommendations);
+    let agent =
+        ConfigAgent::with_config_paths(config_paths.clone()).with_recommendations(recommendations);
 
     ClientToAgent::builder()
         .on_receive_notification(
@@ -223,8 +223,8 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
     let notifications_clone = notifications.clone();
 
     // Use empty recommendations to avoid triggering the diff prompt
-    let agent = ConfigAgent::with_config_paths(config_paths)
-        .with_recommendations(Recommendations::empty());
+    let agent =
+        ConfigAgent::with_config_paths(config_paths).with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
         .on_receive_notification(
@@ -314,8 +314,8 @@ async fn test_config_mode_entry() -> Result<(), sacp::Error> {
     let notifications_clone = notifications.clone();
 
     // Use empty recommendations to avoid triggering the diff prompt
-    let agent = ConfigAgent::with_config_paths(config_paths)
-        .with_recommendations(Recommendations::empty());
+    let agent =
+        ConfigAgent::with_config_paths(config_paths).with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
         .on_receive_notification(

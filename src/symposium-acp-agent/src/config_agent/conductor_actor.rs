@@ -91,7 +91,7 @@ impl ConductorHandle {
         request_cx: JrRequestCx<NewSessionResponse>,
     ) -> Result<(), sacp::Error> {
         tracing::debug!(?request, "ConductorHandle::send_new_session");
-        
+
         self.tx
             .send(ConductorMessage::NewSession {
                 request,
@@ -133,7 +133,7 @@ impl ConductorHandle {
     /// downstream agent or accept new requests.
     pub async fn pause(&self) -> Result<oneshot::Sender<()>, sacp::Error> {
         tracing::debug!("ConductorHandle::pause");
-        
+
         let (resume_tx_sender, resume_tx_receiver) = oneshot::channel();
 
         self.tx

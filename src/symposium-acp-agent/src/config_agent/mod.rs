@@ -417,7 +417,11 @@ impl ConfigAgent {
 
                 self.sessions.insert(
                     session_id,
-                    SessionState::Config { actor: actor_handle, workspace_path, return_to: None },
+                    SessionState::Config {
+                        actor: actor_handle,
+                        workspace_path,
+                        return_to: None,
+                    },
                 );
 
                 return Ok(());

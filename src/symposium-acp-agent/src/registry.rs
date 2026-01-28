@@ -358,7 +358,10 @@ pub async fn fetch_registry() -> Result<RegistryJson> {
 /// List all available agents (built-ins + registry)
 pub async fn list_agents() -> Result<Vec<AgentListEntry>> {
     let agents_with_sources = list_agents_with_sources().await?;
-    Ok(agents_with_sources.into_iter().map(|(entry, _)| entry).collect())
+    Ok(agents_with_sources
+        .into_iter()
+        .map(|(entry, _)| entry)
+        .collect())
 }
 
 /// Agent selection entry - agent info paired with its ComponentSource for storage.
@@ -450,9 +453,8 @@ fn entry_to_component_source(entry: &RegistryEntry) -> ComponentSource {
         ComponentSource::Cargo(cargo.clone())
     } else if let Some(binary) = &dist.binary {
         // Convert HashMap to BTreeMap for ComponentSource
-        let btree: BTreeMap<String, BinaryDistribution> = binary.iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let btree: BTreeMap<String, BinaryDistribution> =
+            binary.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         ComponentSource::Binary(btree)
     } else {
         // Fallback to registry ID if no distribution specified
