@@ -261,73 +261,6 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
     ])
 }
 
-pub fn built_in_proxies() -> Result<Vec<RegistryEntry>> {
-    let exe = current_exe()?;
-    let exe_str = exe.to_string_lossy().to_string();
-
-    Ok(vec![
-        RegistryEntry {
-            id: "sparkle".to_string(),
-            name: "Sparkle".to_string(),
-            version: String::new(),
-            description: Some("Sparkle AI Collaboration Identity Framework".to_string()),
-            distribution: Distribution {
-                local: None,
-                npx: None,
-                pipx: None,
-                binary: None,
-                cargo: Some(CargoDistribution {
-                    crate_name: "sparkle-mcp".to_string(),
-                    version: None, // Use latest
-                    binary: None,  // Auto-discover from crates.io
-                    args: vec!["--acp".to_string()],
-                }),
-            },
-        },
-        RegistryEntry {
-            id: "ferris".to_string(),
-            name: "Ferris".to_string(),
-            version: String::new(),
-            description: Some("Built-in Ferris component".to_string()),
-            distribution: Distribution {
-                local: Some(LocalDistribution {
-                    command: exe_str.clone(),
-                    args: vec![
-                        "proxy-shim".to_string(),
-                        "--proxy".to_string(),
-                        "ferris".to_string(),
-                    ],
-                    env: BTreeMap::new(),
-                }),
-                npx: None,
-                pipx: None,
-                binary: None,
-                cargo: None,
-            },
-        },
-        RegistryEntry {
-            id: "cargo".to_string(),
-            name: "Cargo".to_string(),
-            version: String::new(),
-            description: Some("Built-in Cargo component".to_string()),
-            distribution: Distribution {
-                local: Some(LocalDistribution {
-                    command: exe_str.clone(),
-                    args: vec![
-                        "proxy-shim".to_string(),
-                        "--proxy".to_string(),
-                        "cargo".to_string(),
-                    ],
-                    env: BTreeMap::new(),
-                }),
-                npx: None,
-                pipx: None,
-                binary: None,
-                cargo: None,
-            },
-        },
-    ])
-}
 
 // ============================================================================
 // Registry Fetching
@@ -784,17 +717,8 @@ pub async fn resolve_extension(extension: &str) -> Result<McpServer> {
     } else {
         extension.to_string()
     };
-    // Check built-ins first
-    for entry in built_in_proxies()? {
-        if entry.id == ext_id {
-            let Some(agent) = resolve_distribution(&entry).await? else {
-                bail!("Failed to resolve built-in extension: {}", entry.id);
-            };
-            return Ok(agent);
-        }
-    }
 
-    // Fetch registry and find the agent
+    // Fetch registry and find the extension
     let registry = fetch_registry().await?;
     let entry = registry
         .extensions
@@ -822,20 +746,13 @@ async fn resolve_builtin(name: &str) -> Result<McpServer> {
     let exe = current_exe()?;
     let exe_str = exe.to_string_lossy().to_string();
 
-    // Check if it's a known built-in proxy
+    // Check if it's a known built-in
     match name {
-        "ferris" | "cargo" => Ok(McpServer::Stdio(McpServerStdio::new(name, &exe_str).args(
-            vec![
-                "proxy-shim".to_string(),
-                "--proxy".to_string(),
-                name.to_string(),
-            ],
-        ))),
         "eliza" => Ok(McpServer::Stdio(
             McpServerStdio::new("ElizACP", &exe_str).args(vec!["eliza".to_string()]),
         )),
         _ => bail!(
-            "Unknown built-in component: '{}'. Available builtins: ferris, cargo, eliza",
+            "Unknown built-in component: '{}'. Available builtins: eliza",
             name
         ),
     }
@@ -848,16 +765,6 @@ async fn resolve_from_registry(id: &str) -> Result<McpServer> {
         if entry.id == id {
             let Some(server) = resolve_distribution(&entry).await? else {
                 bail!("Failed to resolve built-in agent: {}", id);
-            };
-            return Ok(server);
-        }
-    }
-
-    // Check built-in proxies
-    for entry in built_in_proxies()? {
-        if entry.id == id {
-            let Some(server) = resolve_distribution(&entry).await? else {
-                bail!("Failed to resolve built-in proxy: {}", id);
             };
             return Ok(server);
         }

@@ -124,13 +124,6 @@ enum Command {
     #[command(subcommand)]
     Registry(RegistryCommand),
 
-    /// Act as a shim around a builtin proxy (i.e. ferris and cargo).
-    /// Will be removed when those are published and can be used "normally".
-    ProxyShim {
-        #[arg(long)]
-        proxy: String,
-    },
-
     /// Initialize workspace configuration (useful for CI/testing)
     ///
     /// Creates both workspace-specific config and global agent default.
@@ -298,22 +291,6 @@ async fn main() -> Result<()> {
             RegistryCommand::ResolveExtension { extension_id } => {
                 let server = registry::resolve_extension(&extension_id).await?;
                 println!("{}", serde_json::to_string(&server)?);
-            }
-        },
-
-        Command::ProxyShim { proxy } => match proxy.as_str() {
-            "ferris" => {
-                symposium_ferris::FerrisComponent::default()
-                    .serve(sacp_tokio::Stdio::new())
-                    .await?;
-            }
-            "cargo" => {
-                symposium_cargo::CargoProxy
-                    .serve(sacp_tokio::Stdio::new())
-                    .await?;
-            }
-            _ => {
-                anyhow::bail!("Unexpected proxy {proxy}. Expected one of `ferris` or `cargo`.");
             }
         },
 
