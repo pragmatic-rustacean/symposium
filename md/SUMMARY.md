@@ -12,6 +12,7 @@
 
 - [Introduction](./introduction.md)
 - [About](./about.md)
+  - [Agent mods](./about-mods.md)
 
 # Using Symposium
 
