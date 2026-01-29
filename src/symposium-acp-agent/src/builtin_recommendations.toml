@@ -9,10 +9,15 @@ source.cargo = { crate = "sparkle-mcp", args = ["--acp"] }
 
 # Ferris - Rust development tools (recommended for Rust projects)
 [[recommendation]]
-source.builtin = "ferris"
+source.cargo = { crate = "symposium-ferris" }
 when.file-exists = "Cargo.toml"
 
 # Cargo - Cargo build/test tools (recommended for Rust projects)
 [[recommendation]]
 source.cargo = { crate = "symposium-cargo" }
+when.file-exists = "Cargo.toml"
+
+# Rust Analyzer tool
+[[recommendation]]
+source.cargo = { crate = "symposium-rust-analyzer" }
 when.file-exists = "Cargo.toml"

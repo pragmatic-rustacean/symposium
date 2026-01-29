@@ -27,9 +27,7 @@ clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# Symposium proxy components
-symposium-ferris = { path = "../symposium-ferris", version = "1.0.2" }
-# sparkle is now installed via cargo-binstall at runtime
+# Symposium proxy components are installed at runtime via cargo distribution
 
 # Built-in agents
 elizacp.workspace = true

@@ -9,7 +9,7 @@ use sacp::DynComponent;
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
-use symposium_acp_agent::registry::{built_in_proxies, resolve_distribution};
+use symposium_acp_agent::registry::{CargoDistribution, ComponentSource};
 
 #[derive(Parser, Debug)]
 #[command(name = "symposium-benchmark")]
@@ -102,18 +102,31 @@ async fn run_benchmark(benchmark: &Benchmark, output_dir: &PathBuf) -> Result<()
     let research_prompt = benchmark.prompt;
     let expected_result = benchmark.expected;
 
-    // Build Symposium agent with ferris proxy only (no sparkle for benchmarks)
+    // Build Symposium agent with ferris and cargo proxies (no sparkle for benchmarks)
     let agent = AcpAgent::from_str("npx -y '@zed-industries/claude-code-acp'")?;
     let config = symposium_acp_agent::symposium::SymposiumConfig::new().trace_dir(".");
-    let mut proxies = vec![];
-    for proxy in built_in_proxies()? {
-        if proxy.id == "ferris" || proxy.id == "cargo" {
-            let server = resolve_distribution(&proxy)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("Missing extension."))?;
-            proxies.push(DynComponent::new(AcpAgent::new(server)));
-        }
-    }
+
+    // Resolve ferris and cargo from cargo distribution
+    let ferris_source = ComponentSource::Cargo(CargoDistribution {
+        crate_name: "symposium-ferris".to_string(),
+        version: None,
+        binary: None,
+        args: vec![],
+    });
+    let cargo_source = ComponentSource::Cargo(CargoDistribution {
+        crate_name: "symposium-cargo".to_string(),
+        version: None,
+        binary: None,
+        args: vec![],
+    });
+
+    let ferris_server = ferris_source.resolve().await?;
+    let cargo_server = cargo_source.resolve().await?;
+
+    let proxies = vec![
+        DynComponent::new(AcpAgent::new(ferris_server)),
+        DynComponent::new(AcpAgent::new(cargo_server)),
+    ];
     let symposium =
         symposium_acp_agent::symposium::Symposium::new(config, proxies).with_agent(agent);
 

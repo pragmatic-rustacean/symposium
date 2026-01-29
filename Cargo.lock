@@ -3808,7 +3808,6 @@ dependencies = [
  "serial_test",
  "sha2",
  "shell-words",
- "symposium-ferris",
  "tar",
  "tempfile",
  "tokio",
@@ -3851,7 +3850,7 @@ dependencies = [
 
 [[package]]
 name = "symposium-ferris"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "cargo_metadata 0.18.1",

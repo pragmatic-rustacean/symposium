@@ -407,7 +407,7 @@ mod tests {
         let old_format = r#"{
             "agent": {"builtin": "eliza"},
             "extensions": [
-                {"source": {"builtin": "ferris"}, "enabled": true, "when": {}}
+                {"source": {"cargo": {"crate": "symposium-ferris"}}, "enabled": true, "when": {}}
             ]
         }"#;
         std::fs::write(&config_path, old_format).unwrap();
@@ -420,7 +420,12 @@ mod tests {
         assert_eq!(loaded.extensions.len(), 1);
         assert_eq!(
             loaded.extensions[0].source,
-            ComponentSource::Builtin("ferris".to_string())
+            ComponentSource::Cargo(CargoDistribution {
+                crate_name: "symposium-ferris".to_string(),
+                version: None,
+                binary: None,
+                args: vec![],
+            })
         );
     }
 
