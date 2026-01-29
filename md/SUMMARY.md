@@ -18,6 +18,8 @@
 
 - [How to install](./install.md)
     - [VSCode](./install-vscode.md)
+    - [Zed](./install-zed.md)
+    - [Rust Rover](./install-rust-rover.md)
     - [Other editors](./install-other.md)
 - [Using Symposium](./using/symposium.md)
 - [Built-in mods](./using/mods.md)

@@ -10,13 +10,13 @@
     </a>
   </li>
   <li>
-    <a href="./install-other.md">
+    <a href="./install-zed.md">
       <img src="./artwork/logos/zed.png" alt="Zed"/>
       <span class="editor-name">Zed</span>
     </a>
   </li>
   <li>
-    <a href="./install-other.md">
+    <a href="./install-rust-rover.md">
       <img src="./artwork/logos/rustrover.png" alt="RustRover"/>
       <span class="editor-name">RustRover</span>
     </a>
