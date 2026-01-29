@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.0.0](https://github.com/symposium-dev/symposium/compare/symposium-acp-agent-v1.3.0...symposium-acp-agent-v2.0.0) - 2026-01-29
+## [2.0.1](https://github.com/symposium-dev/symposium/compare/symposium-acp-agent-v1.3.0...symposium-acp-agent-v2.0.1) - 2026-01-29
 
 ### Added
 
