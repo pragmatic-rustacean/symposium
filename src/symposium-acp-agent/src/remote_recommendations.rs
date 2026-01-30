@@ -154,6 +154,13 @@ fn load_local_recommendations(config_paths: &ConfigPaths) -> Result<Option<Recom
         .join("config")
         .join(LOCAL_RECOMMENDATIONS_FILENAME);
 
+    #[cfg(test)]
+    eprintln!(
+        "DEBUG load_local_recommendations: checking path {:?}, exists={}",
+        local_path,
+        local_path.exists()
+    );
+
     if !local_path.exists() {
         return Ok(None);
     }
@@ -170,12 +177,24 @@ fn load_local_recommendations(config_paths: &ConfigPaths) -> Result<Option<Recom
         )
     })?;
 
+    #[cfg(test)]
+    eprintln!(
+        "DEBUG load_local_recommendations: read {} bytes",
+        content.len()
+    );
+
     let recommendations = Recommendations::from_toml(&content).with_context(|| {
         format!(
             "Failed to parse local recommendations from {}",
             local_path.display()
         )
     })?;
+
+    #[cfg(test)]
+    eprintln!(
+        "DEBUG load_local_recommendations: parsed {} mods",
+        recommendations.mods.len()
+    );
 
     Ok(Some(recommendations))
 }
@@ -248,17 +267,23 @@ mod tests {
         // Create local recommendations with a unique mod
         let local_dir = config_paths.root().join("config");
         std::fs::create_dir_all(&local_dir).unwrap();
-        std::fs::write(
-            local_dir.join(LOCAL_RECOMMENDATIONS_FILENAME),
-            r#"
+        let local_file_path = local_dir.join(LOCAL_RECOMMENDATIONS_FILENAME);
+        let local_content = r#"
 [[recommendation]]
 source.builtin = "test-local-mod"
-"#,
-        )
-        .unwrap();
+"#;
+        std::fs::write(&local_file_path, local_content).unwrap();
+
+        // Debug: verify the file was written
+        eprintln!("DEBUG: Wrote local recommendations to: {:?}", local_file_path);
+        eprintln!("DEBUG: File exists: {}", local_file_path.exists());
+        if let Ok(content) = std::fs::read_to_string(&local_file_path) {
+            eprintln!("DEBUG: File content:\n{}", content);
+        }
 
         // Load should succeed (fetches from remote) and include local mod
         let recs = load_recommendations(&config_paths).await.unwrap();
+        eprintln!("DEBUG: Loaded {} mods", recs.mods.len());
 
         // Should have the local mod merged in
         let names: Vec<_> = recs.mods.iter().map(|r| r.display_name()).collect();
