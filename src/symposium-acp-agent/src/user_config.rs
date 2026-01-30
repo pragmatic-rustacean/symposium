@@ -1,8 +1,14 @@
 //! User configuration types for Symposium.
 //!
-//! Configuration is split between:
-//! - Global agent config: `~/.symposium/config/agent.json` - the selected agent for all workspaces
-//! - Per-workspace mods: `~/.symposium/config/<encoded-workspace-path>/config.json`
+//! Configuration is stored in platform-appropriate locations:
+//! - Linux: `~/.config/symposium/`
+//! - macOS: `~/Library/Application Support/symposium/`
+//! - Windows: `%APPDATA%\symposium\`
+//!
+//! Within this directory:
+//! - Global agent config: `config/agent.json` - the selected agent for all workspaces
+//! - Per-workspace mods: `config/<encoded-workspace-path>/config.json`
+//! - Cache: `cache/` - for downloaded recommendations and other cached data
 //!
 //! The configuration uses `ComponentSource` as the identity for mods,
 //! enabling easy diffing with recommendations.
@@ -20,20 +26,21 @@ use std::path::{Path, PathBuf};
 /// Manages paths to Symposium configuration files and directories.
 ///
 /// This struct provides paths to various configuration locations and ensures
-/// directories exist when needed. By default, configuration is stored under
-/// `~/.symposium/`. Tests can provide a custom root directory to avoid
-/// modifying the user's home.
+/// directories exist when needed. By default, configuration is stored in
+/// platform-appropriate locations (see module docs). Tests can provide a
+/// custom root directory to avoid modifying the user's config.
 ///
 /// The struct only provides paths and directory creation - callers are
 /// responsible for their own reads and writes.
 #[derive(Debug, Clone)]
 pub struct ConfigPaths {
-    /// Root directory for all Symposium configuration (e.g., `~/.symposium`).
+    /// Root directory for all Symposium configuration.
+    /// Platform-specific: `~/.config/symposium` (Linux), `~/Library/Application Support/symposium` (macOS), etc.
     root: PathBuf,
 }
 
 /// Environment variable to override the default config directory.
-/// When set, this takes precedence over `~/.symposium`.
+/// When set, this takes precedence over the platform-specific default.
 /// Useful for testing to avoid modifying the user's real configuration.
 pub const SYMPOSIUM_CONFIG_DIR_ENV: &str = "SYMPOSIUM_CONFIG_DIR";
 
@@ -41,16 +48,19 @@ impl ConfigPaths {
     /// Create a ConfigPaths using the default location.
     ///
     /// Checks `SYMPOSIUM_CONFIG_DIR` environment variable first,
-    /// falling back to `~/.symposium` if not set.
+    /// falling back to platform-specific config directory:
+    /// - Linux: `~/.config/symposium`
+    /// - macOS: `~/Library/Application Support/symposium`
+    /// - Windows: `%APPDATA%\symposium`
     pub fn default_location() -> Result<Self> {
         if let Ok(dir) = std::env::var(SYMPOSIUM_CONFIG_DIR_ENV) {
             return Ok(Self {
                 root: PathBuf::from(dir),
             });
         }
-        let home = dirs::home_dir().context("Could not determine home directory")?;
+        let config_dir = dirs::config_dir().context("Could not determine config directory")?;
         Ok(Self {
-            root: home.join(".symposium"),
+            root: config_dir.join("symposium"),
         })
     }
 
@@ -61,7 +71,7 @@ impl ConfigPaths {
         Self { root: root.into() }
     }
 
-    /// Get the root directory (e.g., `~/.symposium`).
+    /// Get the root directory (platform-specific, e.g., `~/.config/symposium` on Linux).
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -144,6 +154,33 @@ impl ConfigPaths {
         self.ensure_dir(&path)?;
         Ok(path)
     }
+
+    // ------------------------------------------------------------------------
+    // General cache (for recommendations, etc.)
+    // ------------------------------------------------------------------------
+
+    /// Get the general cache directory.
+    ///
+    /// Location: `<root>/cache/`
+    pub fn cache_dir(&self) -> PathBuf {
+        self.root.join("cache")
+    }
+
+    /// Get the path to the cached recommendations file.
+    ///
+    /// Location: `<root>/cache/recommendations.toml`
+    pub fn recommendations_cache_path(&self) -> PathBuf {
+        self.cache_dir().join("recommendations.toml")
+    }
+
+    /// Ensure the cache directory exists and return the recommendations cache path.
+    ///
+    /// Use this before writing to the recommendations cache.
+    pub fn ensure_cache_dir(&self) -> Result<PathBuf> {
+        let cache_dir = self.cache_dir();
+        self.ensure_dir(&cache_dir)?;
+        Ok(self.recommendations_cache_path())
+    }
 }
 
 /// Mod configuration entry
@@ -181,7 +218,7 @@ pub struct WorkspaceModsConfig {
 ///
 /// Stores the user's selected agent. This agent is used for all workspaces.
 ///
-/// Stored at `~/.symposium/config/agent.json`
+/// Stored at `<config_dir>/config/agent.json`
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct GlobalAgentConfig {
     /// The selected agent for all workspaces
