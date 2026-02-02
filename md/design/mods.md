@@ -44,6 +44,19 @@ The special value `defaults` expands to all known built-in mods:
 --proxy defaults  # equivalent to: --proxy sparkle --proxy ferris --proxy cargo
 ```
 
+## MCP Servers
+
+Workspace configuration can also include MCP servers to attach directly to new
+sessions. These are not mods and do not appear in the proxy chain. Instead,
+they are injected into the session's `mcp_servers` list.
+
+Stdio MCP servers reuse the same `ComponentSource` distribution formats as mods,
+so they can be resolved from `cargo`, `npx`, `pipx`, `binary`, `local`, or
+registry entries. HTTP and SSE transports are configured directly with a URL
+and optional headers.
+
+Each MCP server has an `id` that becomes the MCP server name (tool prefix).
+
 ## Registry Format
 
 The shared registry includes both agents and mods:

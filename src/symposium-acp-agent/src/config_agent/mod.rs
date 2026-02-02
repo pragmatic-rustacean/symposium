@@ -14,8 +14,11 @@ mod uberconductor_actor;
 mod tests;
 
 use crate::recommendations::{Recommendations, RecommendationsExt, WorkspaceRecommendations};
+use crate::registry::ComponentSourceExt;
 use crate::remote_recommendations;
-use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
+use crate::user_config::{
+    ConfigPaths, GlobalAgentConfig, McpServerTransport, WorkspaceModsConfig,
+};
 use conductor_actor::ConductorHandle;
 use config_mode_actor::{ConfigModeHandle, ConfigModeOutput};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
@@ -24,8 +27,9 @@ use fxhash::FxHashMap;
 use sacp::link::AgentToClient;
 use sacp::schema::{
     AgentCapabilities, AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk,
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, SessionId, SessionNotification, SessionUpdate, StopReason, TextContent,
+    InitializeRequest, InitializeResponse, McpServer, McpServerHttp, McpServerSse,
+    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionId,
+    SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 use sacp::util::MatchMessage;
 use sacp::{ClientPeer, Component, JrConnectionCx, JrRequestCx, MessageCx};
@@ -375,7 +379,7 @@ impl ConfigAgent {
     #[tracing::instrument(skip(self, request_cx, uberconductor, cx, config_agent_tx), ret)]
     async fn handle_new_session(
         &mut self,
-        request: NewSessionRequest,
+        mut request: NewSessionRequest,
         request_cx: JrRequestCx<NewSessionResponse>,
         uberconductor: &UberconductorHandle,
         cx: &JrConnectionCx<AgentToClient>,
@@ -482,6 +486,13 @@ impl ConfigAgent {
             ?mods_config,
             "handle_new_session: launching new session"
         );
+
+        // Merge configured MCP servers into the session request.
+        let mcp_servers = self
+            .resolve_mcp_servers(&mods_config)
+            .await
+            .map_err(|e| sacp::util::internal_error(format!("Failed to resolve MCP servers: {}", e)))?;
+        request.mcp_servers.extend(mcp_servers);
 
         // No diff changes - proceed directly to uberconductor
         uberconductor
@@ -744,6 +755,48 @@ impl ConfigAgent {
                 }
             })
             .await
+    }
+
+    async fn resolve_mcp_servers(
+        &self,
+        config: &WorkspaceModsConfig,
+    ) -> Result<Vec<McpServer>, anyhow::Error> {
+        let mut servers = Vec::new();
+
+        for entry in &config.mcp_servers {
+            let server = match &entry.transport {
+                McpServerTransport::Stdio { stdio } => {
+                    let resolved = stdio.source.resolve().await?;
+                    match resolved {
+                        McpServer::Stdio(mut stdio) => {
+                            stdio.name = entry.id.clone();
+                            McpServer::Stdio(stdio)
+                        }
+                        other => {
+                            anyhow::bail!(
+                                "MCP stdio source '{}' resolved to non-stdio transport: {:?}",
+                                entry.id,
+                                other
+                            );
+                        }
+                    }
+                }
+                McpServerTransport::Http { http } => {
+                    McpServer::Http(McpServerHttp::new(entry.id.clone(), http.url.clone()).headers(
+                        http.headers.clone(),
+                    ))
+                }
+                McpServerTransport::Sse { sse } => {
+                    McpServer::Sse(McpServerSse::new(entry.id.clone(), sse.url.clone()).headers(
+                        sse.headers.clone(),
+                    ))
+                }
+            };
+
+            servers.push(server);
+        }
+
+        Ok(servers)
     }
 }
 

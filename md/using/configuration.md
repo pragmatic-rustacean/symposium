@@ -35,6 +35,40 @@ Configuration
 
 Changes take effect immediately for the current session. Use `SAVE` to keep them for future sessions.
 
+## MCP Servers
+
+Workspace configuration can include MCP servers that are attached to every new
+session for that workspace. This is separate from mods and does not use the
+proxy chain.
+
+Example `config.json` snippet:
+
+```json
+{
+  "mods": [],
+  "mcp_servers": [
+    {
+      "id": "github",
+      "stdio": {
+        "source": { "cargo": { "crate": "github-mcp", "args": ["--acp"] } }
+      }
+    },
+    {
+      "id": "db",
+      "sse": {
+        "url": "https://example.com/mcp",
+        "headers": [
+          { "name": "Authorization", "value": "Bearer token" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+The `id` becomes the MCP server name (tool prefix). Stdio MCP servers can use
+any `ComponentSource` format supported by mods.
+
 ## Configuration Location
 
 Symposium stores configuration in platform-specific directories:
