@@ -12,6 +12,10 @@ readme = "README.md"
 name = "symposium-acp-agent"
 path = "src/main.rs"
 
+[[bin]]
+name = "mcp-test-server"
+path = "src/bin/mcp-test-server.rs"
+
 [dependencies]
 sacp-conductor.workspace = true
 sacp.workspace = true
@@ -26,6 +30,7 @@ tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
 
 # Symposium proxy components are installed at runtime via cargo distribution
 
