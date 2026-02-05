@@ -33,6 +33,10 @@ pub enum ComponentSource {
 
     /// Platform-specific binary downloads
     Binary(BTreeMap<String, BinaryDistribution>),
+
+    Http(HttpDistribution),
+
+    Sse(HttpDistribution),
 }
 
 impl ComponentSource {
@@ -68,6 +72,8 @@ impl ComponentSource {
             ComponentSource::Pipx(pipx) => pipx.package.clone(),
             ComponentSource::Cargo(cargo) => cargo.crate_name.clone(),
             ComponentSource::Binary(_) => "binary".to_string(),
+            ComponentSource::Http(dist) => dist.name.clone(),
+            ComponentSource::Sse(dist) => dist.name.clone(),
         }
     }
 
@@ -129,6 +135,26 @@ pub struct BinaryDistribution {
     pub cmd: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
+}
+
+/// An HTTP header to set when making requests.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
+pub struct HttpHeader {
+    /// The name of the HTTP header.
+    pub name: String,
+    /// The value to set for the HTTP header.
+    pub value: String,
+}
+
+/// Available as an http server
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
+pub struct HttpDistribution {
+    /// Human-readable name
+    pub name: String,
+    /// URL to the server/
+    pub url: String,
+    /// HTTP headers to set when making requests.
+    pub headers: Vec<HttpHeader>,
 }
 
 #[cfg(test)]

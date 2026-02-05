@@ -33,9 +33,24 @@ pub use when::When;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ModKind {
+    Proxy,
+    MCP,
+}
+
+impl Default for ModKind {
+    fn default() -> Self {
+        ModKind::Proxy
+    }
+}
+
 /// A recommendation for a component
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Recommendation {
+    #[serde(default = "ModKind::default")]
+    pub kind: ModKind,
+
     /// The source of the component (this IS the identity)
     pub source: ComponentSource,
 

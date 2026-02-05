@@ -228,7 +228,6 @@ mod tests {
 
     fn init_tracing() {
         let _ = tracing_subscriber::fmt()
-            .with_test_writer()
             .compact()
             .with_ansi(false)
             .with_env_filter(

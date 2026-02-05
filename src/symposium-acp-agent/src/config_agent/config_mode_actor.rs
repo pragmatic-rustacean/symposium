@@ -270,7 +270,7 @@ impl ConfigModeActor {
                 };
 
                 // Create mods from recommendations
-                let mods = WorkspaceModsConfig::from_sources(recommendations.mod_sources());
+                let mods = WorkspaceModsConfig::from_recommendations(recommendations.mods);
 
                 self.send_message("Configuration created with recommended mods.\n\n");
                 (agent, mods)

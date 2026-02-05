@@ -8,14 +8,13 @@
 
 use crate::user_config::ConfigPaths;
 use anyhow::{bail, Context, Result};
-use sacp::schema::{EnvVariable, McpServer, McpServerStdio};
+use sacp::schema::{EnvVariable, McpServer, McpServerHttp, McpServerSse, McpServerStdio};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use symposium_recommendations::{
-    BinaryDistribution, CargoDistribution, ComponentSource, LocalDistribution, NpxDistribution,
-    PipxDistribution,
+    BinaryDistribution, CargoDistribution, ComponentSource, HttpDistribution, LocalDistribution, NpxDistribution, PipxDistribution
 };
 
 /// Registry URL - same as VSCode extension uses
@@ -83,6 +82,8 @@ impl ComponentSourceExt for ComponentSource {
             ComponentSource::Pipx(pipx) => resolve_pipx(pipx),
             ComponentSource::Cargo(cargo) => resolve_cargo(cargo).await,
             ComponentSource::Binary(binary_map) => resolve_binary(binary_map).await,
+            ComponentSource::Http(dist) => Ok(resolve_http(dist).await),
+            ComponentSource::Sse(dist) => Ok(resolve_sse(dist).await),
         }
     }
 }
@@ -926,6 +927,16 @@ pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<Option<McpSer
     }
 
     Ok(None)
+}
+
+async fn resolve_http(dist: &HttpDistribution) -> McpServer {
+    let headers = dist.headers.iter().map(|h| sacp::schema::HttpHeader::new(h.name.clone(), h.value.clone())).collect();
+    McpServer::Http(McpServerHttp::new(dist.name.clone(), dist.url.clone()).headers(headers))
+}
+
+async fn resolve_sse(dist: &HttpDistribution) -> McpServer {
+    let headers = dist.headers.iter().map(|h| sacp::schema::HttpHeader::new(h.name.clone(), h.value.clone())).collect();
+    McpServer::Sse(McpServerSse::new(dist.name.clone(), dist.url.clone()).headers(headers))
 }
 
 /// Download and cache a binary distribution

@@ -429,7 +429,7 @@ impl ConfigAgent {
             None => {
                 tracing::debug!("handle_new_session: no workspace mods, applying recommendations");
                 let workspace_recs = self.recommendations_for_workspace(&workspace_path);
-                let config = WorkspaceModsConfig::from_sources(workspace_recs.mod_sources());
+                let config = WorkspaceModsConfig::from_recommendations(workspace_recs.mods);
 
                 // Save the new mods config
                 if let Err(e) = config.save(&self.config_paths, &workspace_path) {

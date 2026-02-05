@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use sacp::schema::HttpHeader;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use symposium_recommendations::ComponentSource;
+use symposium_recommendations::{ComponentSource, ModKind, Recommendation};
 
 // ============================================================================
 // ConfigPaths - the root configuration directory
@@ -187,6 +187,8 @@ impl ConfigPaths {
 /// Mod configuration entry
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModConfig {
+    pub kind: ModKind,
+
     /// The source of this mod
     pub source: ComponentSource,
 
@@ -322,13 +324,15 @@ impl WorkspaceModsConfig {
 
     /// Create a workspace mods config from a list of mod sources.
     /// All mods are enabled by default.
-    pub fn from_sources(sources: Vec<ComponentSource>) -> Self {
+    pub fn from_recommendations(sources: Vec<Recommendation>) -> Self {
         let mods = sources
             .into_iter()
-            .map(|source| ModConfig {
-                source,
+            .map(|rec| ModConfig {
+                kind: rec.kind,
+                source: rec.source,
+                when: rec.when.unwrap_or(When::default()),
                 enabled: true,
-                when: When::default(),
+                
             })
             .collect();
 
@@ -365,15 +369,6 @@ impl WorkspaceModsConfig {
             .with_context(|| format!("Failed to write workspace config to {}", path.display()))?;
         Ok(())
     }
-
-    /// Get enabled mod sources in order
-    pub fn enabled_mods(&self) -> Vec<ComponentSource> {
-        self.mods
-            .iter()
-            .filter(|m| m.enabled)
-            .map(|m| m.source.clone())
-            .collect()
-    }
 }
 
 /// Encode a path for use as a directory name.
@@ -406,23 +401,32 @@ mod tests {
     use symposium_recommendations::CargoDistribution;
 
     #[test]
-    fn test_workspace_mods_config_from_sources() {
-        let sources = vec![
-            ComponentSource::Builtin("ferris".to_string()),
-            ComponentSource::Cargo(CargoDistribution {
-                crate_name: "sparkle-mcp".to_string(),
-                version: None,
-                binary: None,
-                args: vec!["--acp".to_string()],
-            }),
+    fn test_workspace_mods_config_from_recommendations() {
+        let recs = vec![
+            Recommendation {
+                kind: ModKind::Proxy,
+                source: ComponentSource::Builtin("ferris".to_string()),
+                when: None,
+            },
+            Recommendation {
+                kind: ModKind::Proxy,
+                source: ComponentSource::Cargo(CargoDistribution {
+                    crate_name: "sparkle-mcp".to_string(),
+                    version: None,
+                    binary: None,
+                    args: vec!["--acp".to_string()],
+                }),
+                when: None,
+            },
         ];
 
-        let config = WorkspaceModsConfig::from_sources(sources);
+        let config = WorkspaceModsConfig::from_recommendations(recs);
 
         expect![[r#"
             WorkspaceModsConfig {
                 mods: [
                     ModConfig {
+                        kind: Proxy,
                         source: Builtin(
                             "ferris",
                         ),
@@ -437,6 +441,7 @@ mod tests {
                         },
                     },
                     ModConfig {
+                        kind: Proxy,
                         source: Cargo(
                             CargoDistribution {
                                 crate_name: "sparkle-mcp",
@@ -470,8 +475,12 @@ mod tests {
         let config_paths = ConfigPaths::with_root(temp_dir.path());
         let workspace_path = PathBuf::from("/some/workspace");
 
-        let sources = vec![ComponentSource::Builtin("ferris".to_string())];
-        let config = WorkspaceModsConfig::from_sources(sources);
+        let recs = vec![Recommendation {
+            kind: ModKind::Proxy,
+            source: ComponentSource::Builtin("ferris".to_string()),
+            when: None,
+        }];
+        let config = WorkspaceModsConfig::from_recommendations(recs);
 
         // Save
         config.save(&config_paths, &workspace_path).unwrap();
