@@ -150,6 +150,23 @@ fn install_vendor_dependencies(repo_root: &Path) -> Result<()> {
         ));
     }
 
+    // Build mynah-ui (generates dist/ with type declarations)
+    println!("🔨 Building vendor dependencies (mynah-ui)...");
+
+    let output = Command::new("npm")
+        .args(["run", "build"])
+        .current_dir(&mynah_dir)
+        .output()
+        .context("Failed to execute npm run build in vendor/mynah-ui")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "❌ Failed to build vendor dependencies:\n   Error: {}",
+            stderr.trim()
+        ));
+    }
+
     Ok(())
 }
 
