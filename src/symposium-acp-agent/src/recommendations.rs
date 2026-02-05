@@ -282,12 +282,10 @@ impl WorkspaceRecommendations {
     /// Otherwise, returns the diff showing what to add and remove.
     pub fn diff_against(&self, config: &WorkspaceModsConfig) -> Option<RecommendationDiff> {
         // Get the set of recommended sources
-        let recommended_sources: HashSet<_> =
-            self.mods.iter().map(|r| r.source.clone()).collect();
+        let recommended_sources: HashSet<_> = self.mods.iter().map(|r| r.source.clone()).collect();
 
         // Get the set of configured sources
-        let configured_sources: HashSet<_> =
-            config.mods.iter().map(|m| m.source.clone()).collect();
+        let configured_sources: HashSet<_> = config.mods.iter().map(|m| m.source.clone()).collect();
 
         // New = recommended but not configured
         let mut to_add = Vec::new();
@@ -368,8 +366,7 @@ mod tests {
 
     #[test]
     fn test_load_builtin_recommendations() {
-        let recs =
-            Recommendations::load_builtin().expect("Should load builtin recommendations");
+        let recs = Recommendations::load_builtin().expect("Should load builtin recommendations");
 
         // Should have some mod recommendations
         assert!(!recs.mods.is_empty(), "Should have mod recommendations");
@@ -811,7 +808,11 @@ source.builtin = "workspace-mod"
 
         // Should have both global and workspace mods
         assert_eq!(workspace_recs.mods.len(), 2);
-        let names: Vec<_> = workspace_recs.mods.iter().map(|r| r.display_name()).collect();
+        let names: Vec<_> = workspace_recs
+            .mods
+            .iter()
+            .map(|r| r.display_name())
+            .collect();
         assert!(names.contains(&"global-mod".to_string()));
         assert!(names.contains(&"workspace-mod".to_string()));
     }
@@ -845,7 +846,11 @@ when.file-exists = "Cargo.toml"
         // Without Cargo.toml
         let workspace_recs = global_recs.for_workspace(temp_dir.path());
         assert_eq!(workspace_recs.mods.len(), 2); // global-mod + always-mod
-        let names: Vec<_> = workspace_recs.mods.iter().map(|r| r.display_name()).collect();
+        let names: Vec<_> = workspace_recs
+            .mods
+            .iter()
+            .map(|r| r.display_name())
+            .collect();
         assert!(names.contains(&"global-mod".to_string()));
         assert!(names.contains(&"always-mod".to_string()));
         assert!(!names.contains(&"rust-only-mod".to_string()));
@@ -854,7 +859,11 @@ when.file-exists = "Cargo.toml"
         std::fs::write(temp_dir.path().join("Cargo.toml"), "[package]").unwrap();
         let workspace_recs = global_recs.for_workspace(temp_dir.path());
         assert_eq!(workspace_recs.mods.len(), 3); // all three mods
-        let names: Vec<_> = workspace_recs.mods.iter().map(|r| r.display_name()).collect();
+        let names: Vec<_> = workspace_recs
+            .mods
+            .iter()
+            .map(|r| r.display_name())
+            .collect();
         assert!(names.contains(&"rust-only-mod".to_string()));
     }
 }

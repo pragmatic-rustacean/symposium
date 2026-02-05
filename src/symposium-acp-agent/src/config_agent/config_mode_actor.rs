@@ -7,7 +7,6 @@
 use super::ConfigAgentMessage;
 use crate::recommendations::{RecommendationDiff, WorkspaceRecommendations};
 use crate::registry::list_agents_with_sources;
-use symposium_recommendations::ComponentSource;
 use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
@@ -17,6 +16,7 @@ use sacp::schema::SessionId;
 use sacp::JrConnectionCx;
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use symposium_recommendations::ComponentSource;
 use tokio::sync::oneshot;
 
 /// Result of handling menu input.
@@ -270,8 +270,7 @@ impl ConfigModeActor {
                 };
 
                 // Create mods from recommendations
-                let mods =
-                    WorkspaceModsConfig::from_sources(recommendations.mod_sources());
+                let mods = WorkspaceModsConfig::from_sources(recommendations.mod_sources());
 
                 self.send_message("Configuration created with recommended mods.\n\n");
                 (agent, mods)
@@ -330,9 +329,7 @@ impl ConfigModeActor {
             self.send_message("Options:\n");
             self.send_message("* `SAVE` - Accept the new recommendations\n");
             self.send_message("* `IGNORE` - Disable all new recommendations\n");
-            self.send_message(
-                "* `CONFIG` - Select which mods to enable or make other changes\n",
-            );
+            self.send_message("* `CONFIG` - Select which mods to enable or make other changes\n");
 
             let Some(input) = self.next_input().await else {
                 return DiffResult::Config;
@@ -527,11 +524,7 @@ impl ConfigModeActor {
                 self.send_message(format!(
                     "Mod `{}` is now {}.",
                     m.source.display_name(),
-                    if m.enabled {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    },
+                    if m.enabled { "enabled" } else { "disabled" },
                 ));
                 return MenuAction::Redisplay;
             } else if mods.mods.is_empty() {
@@ -553,9 +546,7 @@ impl ConfigModeActor {
             LazyLock::new(|| Regex::new(r"(?i)^move\s+(\d+)\s+to\s+(\d+|start|end)$").unwrap());
 
         if MOVE_RE.captures(text).is_some() {
-            self.send_message(
-                "Mod reordering is not yet supported with the new config format.",
-            );
+            self.send_message("Mod reordering is not yet supported with the new config format.");
             return MenuAction::Continue;
         }
 

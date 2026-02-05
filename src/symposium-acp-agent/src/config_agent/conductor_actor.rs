@@ -8,7 +8,6 @@
 
 use super::ConfigAgentMessage;
 use crate::registry::ComponentSourceExt;
-use symposium_recommendations::ComponentSource;
 use crate::user_config::ModConfig;
 use futures::channel::mpsc::UnboundedSender;
 use sacp::link::{AgentToClient, ClientToAgent, ProxyToConductor};
@@ -19,6 +18,7 @@ use sacp::{DynComponent, JrConnectionCx, JrRequestCx, MessageCx};
 use sacp_conductor::{Conductor, McpBridgeMode};
 use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
+use symposium_recommendations::ComponentSource;
 use tokio::sync::{mpsc, oneshot};
 
 /// Messages that can be sent to the ConductorActor.
@@ -177,8 +177,7 @@ async fn build_proxies(
 
 /// Get enabled mod sources from the list
 fn enabled_mod_sources(mods: &[ModConfig]) -> Vec<ComponentSource> {
-    mods
-        .iter()
+    mods.iter()
         .filter(|m| m.enabled)
         .map(|m| m.source.clone())
         .collect()

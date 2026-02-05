@@ -273,7 +273,9 @@ mod tests {
 [[recommendation]]
 source.builtin = "test-local-mod"
 "#,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         // Load should succeed (fetches from remote) and include local mod
         let recs = load_recommendations(&config_paths).await.unwrap();

@@ -8,7 +8,6 @@
 
 use super::conductor_actor::ConductorHandle;
 use super::ConfigAgentMessage;
-use symposium_recommendations::ComponentSource;
 use crate::user_config::ModConfig;
 use futures::channel::mpsc::UnboundedSender;
 use fxhash::FxHashMap;
@@ -16,6 +15,7 @@ use sacp::link::AgentToClient;
 use sacp::schema::{NewSessionRequest, NewSessionResponse};
 use sacp::{JrConnectionCx, JrRequestCx};
 use std::path::PathBuf;
+use symposium_recommendations::ComponentSource;
 use tokio::sync::mpsc;
 
 /// Messages that can be sent to the UberconductorActor.

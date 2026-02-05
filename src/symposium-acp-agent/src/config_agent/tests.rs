@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::recommendations::Recommendations;
-use symposium_recommendations::{ComponentSource, LocalDistribution};
 use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
 use sacp::link::ClientToAgent;
 use sacp::on_receive_notification;
@@ -11,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use symposium_recommendations::{ComponentSource, LocalDistribution};
 use tempfile::TempDir;
 
 /// Initialize tracing for tests. Call at the start of tests that need logging.
@@ -98,8 +98,8 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
 
-    let agent =
-        ConfigAgent::with_config_paths(config_paths.clone()).with_recommendations(Recommendations::empty());
+    let agent = ConfigAgent::with_config_paths(config_paths.clone())
+        .with_recommendations(Recommendations::empty());
 
     ClientToAgent::builder()
         .name("test_client")
@@ -188,13 +188,12 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
 
             // Verify config was written
             let loaded_agent = GlobalAgentConfig::load(&config_paths).unwrap();
-            assert!(loaded_agent.is_some(), "Agent config should have been saved");
-            let loaded_mods =
-                WorkspaceModsConfig::load(&config_paths, &workspace_path).unwrap();
             assert!(
-                loaded_mods.is_some(),
-                "Mods config should have been saved"
+                loaded_agent.is_some(),
+                "Agent config should have been saved"
             );
+            let loaded_mods = WorkspaceModsConfig::load(&config_paths, &workspace_path).unwrap();
+            assert!(loaded_mods.is_some(), "Mods config should have been saved");
 
             Ok(())
         })

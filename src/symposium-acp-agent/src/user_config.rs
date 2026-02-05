@@ -14,11 +14,11 @@
 //! enabling easy diffing with recommendations.
 
 use crate::recommendations::When;
-use symposium_recommendations::ComponentSource;
 use anyhow::{Context, Result};
 use sacp::schema::HttpHeader;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use symposium_recommendations::ComponentSource;
 
 // ============================================================================
 // ConfigPaths - the root configuration directory
@@ -402,8 +402,8 @@ fn encode_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use symposium_recommendations::CargoDistribution;
     use expect_test::expect;
+    use symposium_recommendations::CargoDistribution;
 
     #[test]
     fn test_workspace_mods_config_from_sources() {

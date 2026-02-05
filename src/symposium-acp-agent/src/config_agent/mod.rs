@@ -16,9 +16,7 @@ mod tests;
 use crate::recommendations::{Recommendations, RecommendationsExt, WorkspaceRecommendations};
 use crate::registry::ComponentSourceExt;
 use crate::remote_recommendations;
-use crate::user_config::{
-    ConfigPaths, GlobalAgentConfig, McpServerTransport, WorkspaceModsConfig,
-};
+use crate::user_config::{ConfigPaths, GlobalAgentConfig, McpServerTransport, WorkspaceModsConfig};
 use conductor_actor::ConductorHandle;
 use config_mode_actor::{ConfigModeHandle, ConfigModeOutput};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
@@ -488,10 +486,9 @@ impl ConfigAgent {
         );
 
         // Merge configured MCP servers into the session request.
-        let mcp_servers = self
-            .resolve_mcp_servers(&mods_config)
-            .await
-            .map_err(|e| sacp::util::internal_error(format!("Failed to resolve MCP servers: {}", e)))?;
+        let mcp_servers = self.resolve_mcp_servers(&mods_config).await.map_err(|e| {
+            sacp::util::internal_error(format!("Failed to resolve MCP servers: {}", e))
+        })?;
         request.mcp_servers.extend(mcp_servers);
 
         // No diff changes - proceed directly to uberconductor
@@ -772,25 +769,17 @@ impl ConfigAgent {
                             stdio.name = entry.id.clone();
                             McpServer::Stdio(stdio)
                         }
-                        other => {
-                            anyhow::bail!(
-                                "MCP stdio source '{}' resolved to non-stdio transport: {:?}",
-                                entry.id,
-                                other
-                            );
-                        }
+                        other => other,
                     }
                 }
-                McpServerTransport::Http { http } => {
-                    McpServer::Http(McpServerHttp::new(entry.id.clone(), http.url.clone()).headers(
-                        http.headers.clone(),
-                    ))
-                }
-                McpServerTransport::Sse { sse } => {
-                    McpServer::Sse(McpServerSse::new(entry.id.clone(), sse.url.clone()).headers(
-                        sse.headers.clone(),
-                    ))
-                }
+                McpServerTransport::Http { http } => McpServer::Http(
+                    McpServerHttp::new(entry.id.clone(), http.url.clone())
+                        .headers(http.headers.clone()),
+                ),
+                McpServerTransport::Sse { sse } => McpServer::Sse(
+                    McpServerSse::new(entry.id.clone(), sse.url.clone())
+                        .headers(sse.headers.clone()),
+                ),
             };
 
             servers.push(server);

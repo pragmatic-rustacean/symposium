@@ -8,13 +8,14 @@ use tempfile::TempDir;
 use sacp::link::ClientToAgent;
 use sacp::on_receive_notification;
 use sacp::schema::{
-    ContentBlock, ContentChunk, InitializeRequest, NewSessionRequest, PromptRequest, ProtocolVersion, SessionNotification, SessionUpdate, StopReason, TextContent
+    ContentBlock, ContentChunk, InitializeRequest, NewSessionRequest, PromptRequest,
+    ProtocolVersion, SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 
 use symposium_acp_agent::recommendations::Recommendations;
 use symposium_acp_agent::user_config::{
-    ConfigPaths, GlobalAgentConfig, McpServerConfig, McpServerStdioConfig,
-    McpServerTransport, WorkspaceModsConfig,
+    ConfigPaths, GlobalAgentConfig, McpServerConfig, McpServerStdioConfig, McpServerTransport,
+    WorkspaceModsConfig,
 };
 use symposium_acp_agent::ConfigAgent;
 use symposium_recommendations::{ComponentSource, LocalDistribution};
@@ -86,9 +87,7 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
         },
     });
 
-    mods_config
-        .save(&config_paths, &workspace_path)
-        .unwrap();
+    mods_config.save(&config_paths, &workspace_path).unwrap();
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
@@ -169,4 +168,3 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
         })
         .await
 }
-
