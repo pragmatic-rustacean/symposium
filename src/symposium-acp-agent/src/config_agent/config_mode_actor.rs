@@ -516,6 +516,11 @@ impl ConfigModeActor {
             return MenuAction::Redisplay;
         }
 
+        // Manage MCP servers
+        if text_upper == "M" || text_upper == "MCPS" || text_upper == "MCP" {
+            return self.manage_mcp_servers(mods).await;
+        }
+
         // Toggle mod by index (1-based)
         if let Ok(display_index) = text.parse::<usize>() {
             if display_index >= 1 && display_index <= mods.mods.len() {
@@ -553,6 +558,142 @@ impl ConfigModeActor {
         // Unknown command
         self.send_message(format!("Unknown command: `{}`", text));
         MenuAction::Continue
+    }
+
+    /// Manage MCP servers interactively.
+    /// Supports listing, adding, and removing MCP servers.
+    async fn manage_mcp_servers(&mut self, mods: &mut WorkspaceModsConfig) -> MenuAction {
+        loop {
+            // Show current MCP servers
+            let mut msg = String::new();
+            msg.push_str("# MCP Servers\n\n");
+            if mods.mcp_servers.is_empty() {
+                msg.push_str("  * (none configured)\n\n");
+            } else {
+                for (i, s) in mods.mcp_servers.iter().enumerate() {
+                    msg.push_str(&format!("  {}. {} ({})\n", i + 1, s.id, match &s.transport {
+                        crate::user_config::McpServerTransport::Stdio{..} => "stdio",
+                        crate::user_config::McpServerTransport::Http{..} => "http",
+                        crate::user_config::McpServerTransport::Sse{..} => "sse",
+                    }));
+                }
+                msg.push('\n');
+            }
+
+            msg.push_str("Commands:\n");
+            msg.push_str("- `ADD` - Add a new MCP server\n");
+            msg.push_str("- `REMOVE N` - Remove MCP server N\n");
+            msg.push_str("- `BACK` - Return to main menu\n");
+            self.send_message(msg);
+
+            let Some(input) = self.next_input().await else { return MenuAction::Redisplay }; 
+            let input = input.trim();
+            let input_upper = input.to_uppercase();
+
+            if input_upper == "BACK" {
+                return MenuAction::Redisplay;
+            }
+
+            if input_upper == "ADD" {
+                // Ask for transport
+                self.send_message("Transport type (`stdio`, `http`, `sse`):");
+                let Some(transport_input) = self.next_input().await else { return MenuAction::Redisplay };
+                let transport = transport_input.trim().to_lowercase();
+
+                // Ask for id
+                self.send_message("Identifier (short id to reference this server):");
+                let Some(id_input) = self.next_input().await else { return MenuAction::Redisplay };
+                let id = id_input.trim().to_string();
+
+                match transport.as_str() {
+                    "stdio" => {
+                        // Select a component source for the stdio binary
+                        self.send_message("Select the component to run as stdio MCP server:");
+                        if let Some(source) = self.select_agent().await {
+                            let cfg = crate::user_config::McpServerConfig {
+                                id: id.clone(),
+                                transport: crate::user_config::McpServerTransport::Stdio {
+                                    stdio: crate::user_config::McpServerStdioConfig { source },
+                                },
+                            };
+                            mods.mcp_servers.push(cfg);
+                            self.send_message(&format!("Added stdio MCP server `{}`.", id));
+                        } else {
+                            self.send_message("Stdio MCP server addition cancelled.");
+                        }
+                    }
+
+                    "http" | "sse" => {
+                        self.send_message("Enter URL:");
+                        let Some(url_input) = self.next_input().await else { return MenuAction::Redisplay };
+                        let url = url_input.trim().to_string();
+
+                        // Collect optional headers
+                        let mut headers = Vec::new();
+                        loop {
+                            self.send_message("Enter header as `Name: Value` or blank to finish:");
+                            let Some(hdr_input) = self.next_input().await else { break };
+                            let hdr = hdr_input.trim();
+                            if hdr.is_empty() { break }
+                            if let Some((name, value)) = hdr.split_once(":") {
+                                headers.push(sacp::schema::HttpHeader::new(name.trim(), value.trim()));
+                            } else {
+                                self.send_message("Invalid header format. Use `Name: Value`.");
+                            }
+                        }
+
+                        if transport == "http" {
+                            let cfg = crate::user_config::McpServerConfig {
+                                id: id.clone(),
+                                transport: crate::user_config::McpServerTransport::Http {
+                                    http: crate::user_config::McpServerHttpConfig { url, headers },
+                                },
+                            };
+                            mods.mcp_servers.push(cfg);
+                            self.send_message(&format!("Added http MCP server `{}`.", id));
+                        } else {
+                            let cfg = crate::user_config::McpServerConfig {
+                                id: id.clone(),
+                                transport: crate::user_config::McpServerTransport::Sse {
+                                    sse: crate::user_config::McpServerSseConfig { url, headers },
+                                },
+                            };
+                            mods.mcp_servers.push(cfg);
+                            self.send_message(&format!("Added sse MCP server `{}`.", id));
+                        }
+                    }
+
+                    _ => {
+                        self.send_message("Unknown transport type. Use `stdio`, `http`, or `sse`.");
+                    }
+                }
+
+                continue;
+            }
+
+            // Remove command: "REMOVE N"
+            if input_upper.starts_with("REMOVE") || input_upper.starts_with("R ") {
+                let parts: Vec<_> = input.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    if let Ok(idx) = parts[1].parse::<usize>() {
+                        if idx >= 1 && idx <= mods.mcp_servers.len() {
+                            let removed = mods.mcp_servers.remove(idx - 1);
+                            self.send_message(&format!("Removed MCP server `{}`.", removed.id));
+                        } else {
+                            self.send_message("Invalid index for REMOVE.");
+                        }
+                    } else {
+                        self.send_message("Invalid index for REMOVE.");
+                    }
+                } else {
+                    self.send_message("Usage: REMOVE <N>");
+                }
+
+                continue;
+            }
+
+            self.send_message(&format!("Unknown command: `{}`", input));
+        }
     }
 
     /// Show the main menu.
