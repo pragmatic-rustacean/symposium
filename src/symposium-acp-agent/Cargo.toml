@@ -53,6 +53,7 @@ zip = "2"
 fxhash.workspace = true
 regex = "1.12.2"
 cargo_metadata = "0.23"
+which = "8"
 
 [[example]]
 name = "vscodelm_cli"

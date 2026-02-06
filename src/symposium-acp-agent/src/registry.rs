@@ -116,33 +116,35 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
     let exe = current_exe()?;
     let exe_str = exe.to_string_lossy().to_string();
 
-    Ok(vec![
-        RegistryEntry {
-            id: "zed-claude-code".to_string(),
-            name: "Claude Code".to_string(),
-            version: String::new(),
-            description: Some("Zed's Claude Code agent".to_string()),
-            distribution: Distribution {
-                local: None,
-                npx: Some(NpxDistribution {
-                    package: "@zed-industries/claude-code-acp@latest".to_string(),
-                    args: Vec::new(),
-                    env: BTreeMap::new(),
-                }),
-                pipx: None,
-                binary: None,
-                cargo: None,
-            },
+    let mut agents = vec![RegistryEntry {
+        id: "elizacp".to_string(),
+        name: "ElizACP".to_string(),
+        version: String::new(),
+        description: Some("Built-in Eliza agent for testing".to_string()),
+        distribution: Distribution {
+            local: Some(LocalDistribution {
+                command: exe_str.clone(),
+                args: vec!["eliza".to_string()],
+                env: BTreeMap::new(),
+            }),
+            npx: None,
+            pipx: None,
+            binary: None,
+            cargo: None,
         },
-        RegistryEntry {
-            id: "elizacp".to_string(),
-            name: "ElizACP".to_string(),
+    }];
+
+    // Include kiro-cli if available on PATH
+    if which::which("kiro-cli").is_ok() {
+        agents.push(RegistryEntry {
+            id: "kiro-cli".to_string(),
+            name: "Kiro CLI".to_string(),
             version: String::new(),
-            description: Some("Built-in Eliza agent for testing".to_string()),
+            description: Some("Kiro CLI agent".to_string()),
             distribution: Distribution {
                 local: Some(LocalDistribution {
-                    command: exe_str.clone(),
-                    args: vec!["eliza".to_string()],
+                    command: "kiro-cli".to_string(),
+                    args: vec!["acp".to_string()],
                     env: BTreeMap::new(),
                 }),
                 npx: None,
@@ -150,8 +152,10 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
                 binary: None,
                 cargo: None,
             },
-        },
-    ])
+        });
+    }
+
+    Ok(agents)
 }
 
 // ============================================================================
@@ -1076,11 +1080,14 @@ mod tests {
         let elizacp = agents.iter().find(|a| a.id == "elizacp");
         assert!(elizacp.is_some(), "Should have elizacp built-in");
 
-        let claude_code = agents.iter().find(|a| a.id == "zed-claude-code");
-        assert!(
-            claude_code.is_some(),
-            "Should have zed-claude-code built-in"
-        );
+        // kiro-cli is conditionally included based on PATH availability
+        // so we just check if it's present, it has the right structure
+        if let Some(kiro) = agents.iter().find(|a| a.id == "kiro-cli") {
+            assert!(kiro.distribution.local.is_some());
+            let local = kiro.distribution.local.as_ref().unwrap();
+            assert_eq!(local.command, "kiro-cli");
+            assert_eq!(local.args, vec!["acp"]);
+        }
     }
 
     #[test]
