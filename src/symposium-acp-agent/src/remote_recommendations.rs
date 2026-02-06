@@ -302,7 +302,7 @@ mod tests {
         let recs_file = local_dir.join(LOCAL_RECOMMENDATIONS_FILENAME);
         tracing::debug!(?recs_file);
         tokio::fs::write(
-            recs_file,
+            &recs_file,
             r#"
 [[recommendation]]
 source.builtin = "test-local-mod"
@@ -310,6 +310,8 @@ source.builtin = "test-local-mod"
         )
         .await
         .unwrap();
+
+        tracing::debug!(?recs_file, exists = ?recs_file.exists());
 
         // Load should succeed (fetches from remote) and include local mod
         let recs = load_recommendations(&config_paths).await.unwrap();
