@@ -674,6 +674,7 @@ impl ConfigModeActor {
                             break ComponentSource::Local(LocalDistribution {
                                 command,
                                 args,
+                                name: None,
                                 env: Default::default(),
                             });
                         }

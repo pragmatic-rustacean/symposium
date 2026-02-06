@@ -39,6 +39,7 @@ impl CollectedNotifications {
 /// Uses the external elizacp binary (must be installed via `cargo install elizacp`).
 fn elizacp_agent() -> ComponentSource {
     ComponentSource::Local(LocalDistribution {
+        name: None,
         command: "elizacp".to_string(),
         args: vec!["--deterministic".to_string(), "acp".to_string()],
         env: BTreeMap::new(),
@@ -77,6 +78,7 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
         .unwrap();
 
     let source = ComponentSource::Local(LocalDistribution {
+        name: Some("mcp-test-server".to_string()),
         command: mcp_server_bin.to_string_lossy().to_string(),
         args: Vec::new(),
         env: BTreeMap::new(),

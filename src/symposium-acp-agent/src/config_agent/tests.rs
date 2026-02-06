@@ -66,6 +66,7 @@ fn elizacp_agent() -> ComponentSource {
     ComponentSource::Local(LocalDistribution {
         command: "elizacp".to_string(),
         args: vec!["--deterministic".to_string(), "acp".to_string()],
+        name: None,
         env: BTreeMap::new(),
     })
 }

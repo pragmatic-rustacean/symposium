@@ -125,6 +125,7 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
         description: Some("Built-in Eliza agent for testing".to_string()),
         distribution: Distribution {
             local: Some(LocalDistribution {
+                name: None,
                 command: exe_str.clone(),
                 args: vec!["eliza".to_string()],
                 env: BTreeMap::new(),
@@ -145,6 +146,7 @@ pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
             description: Some("Kiro CLI agent".to_string()),
             distribution: Distribution {
                 local: Some(LocalDistribution {
+                    name: None,
                     command: "kiro-cli".to_string(),
                     args: vec!["acp".to_string()],
                     env: BTreeMap::new(),
