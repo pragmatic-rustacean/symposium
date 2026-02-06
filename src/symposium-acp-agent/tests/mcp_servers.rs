@@ -73,6 +73,7 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
     let default_agent = elizacp_agent();
     GlobalAgentConfig::new(default_agent)
         .save(&config_paths)
+        .await
         .unwrap();
 
     let source = ComponentSource::Local(LocalDistribution {
@@ -88,7 +89,7 @@ async fn test_mcp_server_injected_and_used() -> Result<(), sacp::Error> {
         when: When::default(),
     });
 
-    mods_config.save(&config_paths, &workspace_path).unwrap();
+    mods_config.save(&config_paths, &workspace_path).await.unwrap();
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();

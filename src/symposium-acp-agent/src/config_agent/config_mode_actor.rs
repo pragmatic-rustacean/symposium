@@ -7,9 +7,9 @@
 use super::ConfigAgentMessage;
 use crate::recommendations::{RecommendationDiff, WorkspaceRecommendations};
 use crate::registry::list_agents_with_sources;
-use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig, ModConfig};
-use crate::recommendations::When;
-use symposium_recommendations::{HttpDistribution, LocalDistribution, ModKind};
+use crate::remote_recommendations::{self, save_local_recommendations};
+use crate::user_config::{ConfigPaths, GlobalAgentConfig, WorkspaceModsConfig};
+use symposium_recommendations::{HttpDistribution, LocalDistribution, ModKind, Recommendation, ComponentSource};
 use futures::channel::mpsc::{self, UnboundedSender};
 use futures::StreamExt;
 use regex::Regex;
@@ -18,7 +18,6 @@ use sacp::schema::SessionId;
 use sacp::JrConnectionCx;
 use std::path::PathBuf;
 use std::sync::LazyLock;
-use symposium_recommendations::ComponentSource;
 use tokio::sync::oneshot;
 
 /// Result of handling menu input.
@@ -257,7 +256,7 @@ impl ConfigModeActor {
                             Some(agent) => {
                                 // Save as global agent
                                 let global_config = GlobalAgentConfig::new(agent.clone());
-                                if let Err(e) = global_config.save(&self.config_paths) {
+                                if let Err(e) = global_config.save(&self.config_paths).await {
                                     tracing::warn!("Failed to save global agent config: {}", e);
                                 }
                                 agent
@@ -299,6 +298,10 @@ impl ConfigModeActor {
     /// Handle the recommendation diff prompt.
     /// Returns the result of the interaction.
     async fn present_diff(&mut self, mods: &mut WorkspaceModsConfig) -> DiffResult {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        tracing::debug!(diff = ?self.diff);
+
         self.send_message("# Recommendations have changed\n\n");
 
         if !self.diff.to_add.is_empty() {
@@ -518,9 +521,9 @@ impl ConfigModeActor {
             return MenuAction::Redisplay;
         }
 
-        // Manage MCP servers
-        if text_upper == "M" || text_upper == "MCPS" || text_upper == "MCP" {
-            return self.manage_mcp_servers(mods).await;
+        // Manage local recommendations
+        if text_upper == "R" || text_upper == "RECS" || text_upper == "RECOMMENDATIONS" {
+            return self.manage_local_recommendations().await;
         }
 
         // Toggle mod by index (1-based)
@@ -562,43 +565,44 @@ impl ConfigModeActor {
         MenuAction::Continue
     }
 
-    /// Manage MCP servers interactively.
-    /// Supports listing, adding, and removing MCP servers.
-    async fn manage_mcp_servers(&mut self, mods: &mut WorkspaceModsConfig) -> MenuAction {
+    /// Manage local recommendations file (`<config>/config/recommendations.toml`).
+    /// Allows listing, adding, and removing single recommendation entries.
+    async fn manage_local_recommendations(&mut self) -> MenuAction {
         loop {
-            // Show current MCP servers (represented as mods of kind `MCP`)
             let mut msg = String::new();
-            msg.push_str("# MCP Servers\n\n");
-            let mcp_indices: Vec<usize> = mods
-                .mods
-                .iter()
-                .enumerate()
-                .filter(|(_, m)| matches!(m.kind, ModKind::MCP))
-                .map(|(i, _)| i)
-                .collect();
+            msg.push_str("# Local Recommendations\n\n");
 
-            if mcp_indices.is_empty() {
-                msg.push_str("  * (none configured)\n\n");
-            } else {
-                for (pos, &idx) in mcp_indices.iter().enumerate() {
-                    let m = &mods.mods[idx];
-                    let ty = match &m.source {
-                        ComponentSource::Http(_) => "http",
-                        ComponentSource::Sse(_) => "sse",
-                        _ => "stdio",
-                    };
-                    msg.push_str(&format!("  {}. {} ({})\n", pos + 1, m.source.display_name(), ty));
+            let local_path = self.config_paths.local_reccomendations_path();
+            let local_recs = match remote_recommendations::load_local_recommendations(&self.config_paths).await {
+                Ok(recs) => recs,
+                Err(e) => {
+                    msg.push_str(&format!("Failed to read {}: {}\n\n", local_path.display(), e));
+                    return MenuAction::Redisplay;
                 }
-                msg.push('\n');
-            }
+            };
+            let mut recs = match local_recs {
+                Some(recs) if !recs.mods.is_empty() => {
+                    for (m, display_index) in recs.mods.iter().zip(1..) {
+                        let name = m.display_name();
+                        let mcp = matches!(m.kind, ModKind::MCP).then_some(" (MCP)").unwrap_or("");
+                        let condition = m.when.is_some().then_some(" (conditional)").unwrap_or("");
+                        msg.push_str(&format!("  {}. {}{}{}\n", display_index, name, mcp, condition));
+                    }
+                    recs.mods
+                }
+                Some(_) | None => {
+                    msg.push_str("  * (none configured)\n\n");
+                    vec![]
+                }
+            };
 
             msg.push_str("Commands:\n");
-            msg.push_str("- `ADD` - Add a new MCP server\n");
-            msg.push_str("- `REMOVE N` - Remove MCP server N\n");
+            msg.push_str("- `ADD` - Add a new recommendation (interactive)\n");
+            msg.push_str("- `REMOVE N` - Remove recommendation N\n");
             msg.push_str("- `BACK` - Return to main menu\n");
             self.send_message(msg);
 
-            let Some(input) = self.next_input().await else { return MenuAction::Redisplay }; 
+            let Some(input) = self.next_input().await else { return MenuAction::Redisplay };
             let input = input.trim();
             let input_upper = input.to_uppercase();
 
@@ -607,113 +611,139 @@ impl ConfigModeActor {
             }
 
             if input_upper == "ADD" {
-                // Ask for transport
-                self.send_message("Transport type (`stdio`, `http`, `sse`):");
-                let Some(transport_input) = self.next_input().await else { return MenuAction::Redisplay };
-                let transport = transport_input.trim().to_lowercase();
+                self.send_message("Enter kind (`proxy` or `mcp`):");
+                let kind = loop {
+                    let Some(kind) = self.next_input().await else {
+                        return MenuAction::Done;
+                    };
+                    break match &*kind {
+                        "proxy" => ModKind::Proxy,
+                        "mcp" => ModKind::MCP,
+                        _ => {
+                            self.send_message(&format!("Invalid kind {}. Expected one of `proxy` or `mcp`:", kind));
+                            continue;
+                        }
+                    };
+                };
 
-                match transport.as_str() {
-                    "stdio" => {
-                        // Select a component source for the stdio binary
-                        self.send_message("Enter binary path:");
-                        let Some(command) = self.next_input().await else { return MenuAction::Redisplay };
-                        self.send_message("Enter args (space-delimited):");
-                        let Some(args) = self.next_input().await else { return MenuAction::Redisplay };
-                        let args = args.split_ascii_whitespace().map(|s| s.to_string()).collect();
-                        self.send_message("Select the component to run as stdio MCP server:");
-                        let source = ComponentSource::Local(LocalDistribution {
-                            command,
-                            args,
-                            env: Default::default(),
-                        });
-                        let cfg = ModConfig {
-                            kind: ModKind::MCP,
-                            source,
-                            enabled: true,
-                            when: When::default(),
-                        };
-                        mods.mods.push(cfg);
-                        self.send_message("Added stdio MCP server.");
-                    }
+                // Ask for source type and details and build a ComponentSource directly
+                let source = loop {
+                    self.send_message("Enter source type (`local`, `cargo`, `registry`, `http`, `sse`):");
+                    let Some(src) = self.next_input().await else { return MenuAction::Redisplay };
+                    let src = src.trim().to_lowercase();
 
-                    "http" | "sse" => {
-                        self.send_message("Identifier (short id to reference this server):");
-                        let Some(id_input) = self.next_input().await else { return MenuAction::Redisplay };
-                        let id = id_input.trim().to_string();
+                    match src.as_str() {
+                        "local" => {
+                            self.send_message("Enter binary path:");
+                            let Some(command) = self.next_input().await else { return MenuAction::Redisplay };
+                            self.send_message("Enter args (space-delimited, or leave blank):");
+                            let Some(args_line) = self.next_input().await else { return MenuAction::Redisplay };
+                            let args: Vec<String> = args_line
+                                .split_ascii_whitespace()
+                                .map(|s| s.to_string())
+                                .collect();
 
-                        self.send_message("Enter URL:");
-                        let Some(url_input) = self.next_input().await else { return MenuAction::Redisplay };
-                        let url = url_input.trim().to_string();
+                            break ComponentSource::Local(LocalDistribution {
+                                command,
+                                args,
+                                env: Default::default(),
+                            });
+                        }
 
-                        // Collect optional headers
-                        let mut headers = Vec::new();
-                        loop {
-                            self.send_message("Enter header as `Name: Value` or blank to finish:");
-                            let Some(hdr_input) = self.next_input().await else { break };
-                            let hdr = hdr_input.trim();
-                            if hdr.is_empty() { break }
-                            if let Some((name, value)) = hdr.split_once(":") {
-                                headers.push(sacp::schema::HttpHeader::new(name.trim(), value.trim()));
+                        "cargo" => {
+                            self.send_message("Crate name:");
+                            let Some(crate_name) = self.next_input().await else { return MenuAction::Redisplay };
+                            self.send_message("Version (optional, or blank):");
+                            let version = match self.next_input().await {
+                                Some(v) if !v.trim().is_empty() => Some(v.trim().to_string()),
+                                _ => None,
+                            };
+                            self.send_message("Binary name (optional, or blank):");
+                            let binary = match self.next_input().await {
+                                Some(b) if !b.trim().is_empty() => Some(b.trim().to_string()),
+                                _ => None,
+                            };
+                            self.send_message("Args (space-delimited, or blank):");
+                            let args = match self.next_input().await {
+                                Some(a) if !a.trim().is_empty() => a
+                                    .split_ascii_whitespace()
+                                    .map(|s| s.to_string())
+                                    .collect::<Vec<_>>(),
+                                _ => Vec::new(),
+                            };
+
+                            break ComponentSource::Cargo(symposium_recommendations::CargoDistribution {
+                                crate_name: crate_name.trim().to_string(),
+                                version,
+                                binary,
+                                args,
+                            });
+                        }
+
+                        "registry" => {
+                            self.send_message("Registry mod id:");
+                            let Some(id) = self.next_input().await else { return MenuAction::Redisplay };
+                            break ComponentSource::Registry(id.trim().to_string());
+                        }
+
+                        "http" | "sse" => {
+                            self.send_message("Name for server:");
+                            let Some(name) = self.next_input().await else { return MenuAction::Redisplay };
+                            self.send_message("URL:");
+                            let Some(url) = self.next_input().await else { return MenuAction::Redisplay };
+                            let dist = HttpDistribution {
+                                name: name.trim().to_string(),
+                                url: url.trim().to_string(),
+                                headers: vec![],
+                            };
+                            if src == "sse" {
+                                break ComponentSource::Sse(dist);
                             } else {
-                                self.send_message("Invalid header format. Use `Name: Value`.");
+                                break ComponentSource::Http(dist);
                             }
                         }
 
-                        let rec_headers: Vec<symposium_recommendations::HttpHeader> = headers
-                            .into_iter()
-                            .map(|h| symposium_recommendations::HttpHeader { name: h.name, value: h.value })
-                            .collect();
-
-                        if transport == "http" {
-                            let src = ComponentSource::Http(HttpDistribution {
-                                name: id.clone(),
-                                url: url.clone(),
-                                headers: rec_headers,
-                            });
-                            let cfg = ModConfig {
-                                kind: ModKind::MCP,
-                                source: src,
-                                enabled: true,
-                                when: When::default(),
-                            };
-                            mods.mods.push(cfg);
-                            self.send_message("Added http MCP server.");
-                        } else {
-                            let src = ComponentSource::Sse(HttpDistribution {
-                                name: id.clone(),
-                                url: url.clone(),
-                                headers: rec_headers,
-                            });
-                            let cfg = ModConfig {
-                                kind: ModKind::MCP,
-                                source: src,
-                                enabled: true,
-                                when: When::default(),
-                            };
-                            mods.mods.push(cfg);
-                            self.send_message("Added sse MCP server.");
+                        _ => {
+                            self.send_message(&format!("Unknown source type: `{}`.", src));
+                            continue;
                         }
                     }
+                };
 
-                    _ => {
-                        self.send_message("Unknown transport type. Use `stdio`, `http`, or `sse`.");
+                // Build the Recommendation directly; interactive `when` config is not supported here yet.
+                let rec = Recommendation {
+                    kind,
+                    source,
+                    when: None,
+                };
+
+                recs.push(rec);
+
+                match save_local_recommendations(&self.config_paths, recs).await {
+                    Ok(()) => {
+                        self.send_message("Added recommendation to local recommendations file.\n");
                     }
+                    Err(e) => {
+                        self.send_message(&format!("Failed to save recommendations ({}).\n", e));
+                    }    
                 }
 
-                continue;
+                return MenuAction::Redisplay;
             }
 
-            // Remove command: "REMOVE N"
-            if input_upper.starts_with("REMOVE") || input_upper.starts_with("R ") {
+            if input_upper.starts_with("REMOVE") {
                 let parts: Vec<_> = input.split_whitespace().collect();
                 if parts.len() >= 2 {
-                    if let Ok(idx) = parts[1].parse::<usize>() {
-                        if idx >= 1 && idx <= mcp_indices.len() {
-                            let remove_idx = mcp_indices[idx - 1];
-                            let removed = mods.mods.remove(remove_idx);
-                            self.send_message(&format!("Removed MCP server `{}`.", removed.source.display_name()));
-                        } else {
-                            self.send_message("Invalid index for REMOVE.");
+                    if let Ok(idx) = parts[1].parse::<usize>() && idx >= 1 && idx <= recs.len() {
+                        let removed = recs.remove(idx);
+
+                            match save_local_recommendations(&self.config_paths, recs).await {
+                            Ok(()) => {
+                                self.send_message(&format!("Removed MCP server `{}`.", removed.source.display_name()));
+                            }
+                            Err(e) => {
+                                self.send_message(&format!("Failed to remove recommendation ({}).\n", e));
+                            }    
                         }
                     } else {
                         self.send_message("Invalid index for REMOVE.");
@@ -722,9 +752,10 @@ impl ConfigModeActor {
                     self.send_message("Usage: REMOVE <N>");
                 }
 
-                continue;
+                return MenuAction::Redisplay;
             }
 
+            // Unknown
             self.send_message(&format!("Unknown command: `{}`", input));
         }
     }
@@ -761,7 +792,7 @@ impl ConfigModeActor {
         // Commands
         msg.push_str("# Commands\n\n");
         msg.push_str("- `AGENT` - Change agent (affects all workspaces)\n");
-        msg.push_str("- `MCPS` - Manage MCP servers (affects all workspaces)\n");
+        msg.push_str("- `RECS` - Update local recommendations (config/recommendations.toml)\n");
         match mods.len() {
             0 => {}
             1 => msg.push_str("- `1` - Toggle mod enabled/disabled in this workspace\n"),

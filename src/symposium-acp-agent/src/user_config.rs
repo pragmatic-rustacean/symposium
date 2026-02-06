@@ -77,8 +77,9 @@ impl ConfigPaths {
     }
 
     /// Ensure a directory exists (like `mkdir -p`).
-    fn ensure_dir(&self, path: &Path) -> Result<()> {
-        std::fs::create_dir_all(path)
+    async fn ensure_dir(&self, path: &Path) -> Result<()> {
+        tokio::fs::create_dir_all(path)
+            .await
             .with_context(|| format!("Failed to create directory {}", path.display()))
     }
 
@@ -96,10 +97,10 @@ impl ConfigPaths {
     /// Ensure the global agent config directory exists and return the config path.
     ///
     /// Use this before writing to the global agent config file.
-    pub fn ensure_global_agent_config_dir(&self) -> Result<PathBuf> {
+    pub async fn ensure_global_agent_config_dir(&self) -> Result<PathBuf> {
         let path = self.global_agent_config_path();
         if let Some(dir) = path.parent() {
-            self.ensure_dir(dir)?;
+            self.ensure_dir(dir).await?;
         }
         Ok(path)
     }
@@ -127,10 +128,10 @@ impl ConfigPaths {
     /// Ensure the workspace config directory exists and return the config path.
     ///
     /// Use this before writing to the workspace config file.
-    pub fn ensure_workspace_config_dir(&self, workspace_path: &Path) -> Result<PathBuf> {
+    pub async fn ensure_workspace_config_dir(&self, workspace_path: &Path) -> Result<PathBuf> {
         let path = self.workspace_config_path(workspace_path);
         if let Some(dir) = path.parent() {
-            self.ensure_dir(dir)?;
+            self.ensure_dir(dir).await?;
         }
         Ok(path)
     }
@@ -149,9 +150,9 @@ impl ConfigPaths {
     /// Ensure the binary cache directory exists and return the path.
     ///
     /// Use this before downloading agent binaries.
-    pub fn ensure_binary_cache_dir(&self, agent_id: &str, version: &str) -> Result<PathBuf> {
+    pub async fn ensure_binary_cache_dir(&self, agent_id: &str, version: &str) -> Result<PathBuf> {
         let path = self.binary_cache_dir(agent_id, version);
-        self.ensure_dir(&path)?;
+        self.ensure_dir(&path).await?;
         Ok(path)
     }
 
@@ -176,10 +177,14 @@ impl ConfigPaths {
     /// Ensure the cache directory exists and return the recommendations cache path.
     ///
     /// Use this before writing to the recommendations cache.
-    pub fn ensure_cache_dir(&self) -> Result<PathBuf> {
+    pub async fn ensure_cache_dir(&self) -> Result<PathBuf> {
         let cache_dir = self.cache_dir();
-        self.ensure_dir(&cache_dir)?;
+        self.ensure_dir(&cache_dir).await?;
         Ok(self.recommendations_cache_path())
+    }
+
+    pub fn local_reccomendations_path(&self) -> PathBuf {
+        self.root.join("config").join("recommendations.toml")
     }
 }
 
@@ -257,8 +262,8 @@ impl GlobalAgentConfig {
 
     /// Save the global agent config.
     /// Creates the parent directory if it doesn't exist.
-    pub fn save(&self, config_paths: &ConfigPaths) -> Result<()> {
-        let path = config_paths.ensure_global_agent_config_dir()?;
+    pub async fn save(&self, config_paths: &ConfigPaths) -> Result<()> {
+        let path = config_paths.ensure_global_agent_config_dir().await?;
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(&path, &content).with_context(|| {
             format!("Failed to write global agent config to {}", path.display())
@@ -318,10 +323,11 @@ impl WorkspaceModsConfig {
 
     /// Save the workspace mods config for the given workspace.
     /// Creates the parent directory if it doesn't exist.
-    pub fn save(&self, config_paths: &ConfigPaths, workspace_path: &Path) -> Result<()> {
-        let path = config_paths.ensure_workspace_config_dir(workspace_path)?;
+    pub async fn save(&self, config_paths: &ConfigPaths, workspace_path: &Path) -> Result<()> {
+        let path = config_paths.ensure_workspace_config_dir(workspace_path).await?;
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, &content)
+        tokio::fs::write(&path, &content)
+            .await
             .with_context(|| format!("Failed to write workspace config to {}", path.display()))?;
         Ok(())
     }
@@ -424,8 +430,8 @@ mod tests {
         .assert_debug_eq(&config);
     }
 
-    #[test]
-    fn test_workspace_mods_config_save_load_roundtrip() {
+    #[tokio::test]
+    async fn test_workspace_mods_config_save_load_roundtrip() {
         let temp_dir = tempfile::tempdir().unwrap();
         let config_paths = ConfigPaths::with_root(temp_dir.path());
         let workspace_path = PathBuf::from("/some/workspace");
@@ -438,7 +444,7 @@ mod tests {
         let config = WorkspaceModsConfig::from_recommendations(recs);
 
         // Save
-        config.save(&config_paths, &workspace_path).unwrap();
+        config.save(&config_paths, &workspace_path).await.unwrap();
 
         // Load
         let loaded = WorkspaceModsConfig::load(&config_paths, &workspace_path)
@@ -482,15 +488,15 @@ mod tests {
         assert_eq!(config, parsed);
     }
 
-    #[test]
-    fn test_global_agent_config_save_load_roundtrip() {
+    #[tokio::test]
+    async fn test_global_agent_config_save_load_roundtrip() {
         let temp_dir = tempfile::tempdir().unwrap();
         let config_paths = ConfigPaths::with_root(temp_dir.path());
 
         let config = GlobalAgentConfig::new(ComponentSource::Builtin("eliza".to_string()));
 
         // Save
-        config.save(&config_paths).unwrap();
+        config.save(&config_paths).await.unwrap();
 
         // Load
         let loaded = GlobalAgentConfig::load(&config_paths).unwrap().unwrap();
@@ -541,13 +547,19 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let custom_path = temp_dir.path().to_str().unwrap();
 
+        // SAFETY: only modifying in one test
+
         // Set the environment variable
-        std::env::set_var(SYMPOSIUM_CONFIG_DIR_ENV, custom_path);
+        unsafe {
+            std::env::set_var(SYMPOSIUM_CONFIG_DIR_ENV, custom_path);
+        }
 
         let config_paths = ConfigPaths::default_location().unwrap();
         assert_eq!(config_paths.root(), temp_dir.path());
 
         // Clean up
-        std::env::remove_var(SYMPOSIUM_CONFIG_DIR_ENV);
+        unsafe {
+            std::env::remove_var(SYMPOSIUM_CONFIG_DIR_ENV);
+        }
     }
 }

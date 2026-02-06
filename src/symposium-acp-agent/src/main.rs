@@ -317,11 +317,11 @@ async fn main() -> Result<()> {
 
             // Save workspace mods
             let mods_config = WorkspaceModsConfig::from_recommendations(recs);
-            mods_config.save(&config_paths, &workspace)?;
+            mods_config.save(&config_paths, &workspace).await?;
 
             // Save global agent
             let global_config = GlobalAgentConfig::new(agent);
-            global_config.save(&config_paths)?;
+            global_config.save(&config_paths).await?;
 
             eprintln!("Initialized config for {}", workspace.display());
         }

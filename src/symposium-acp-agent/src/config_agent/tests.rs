@@ -47,7 +47,7 @@ impl CollectedNotifications {
 
 /// Helper to write workspace config using the given ConfigPaths.
 /// Now writes both agent (global) and mods (per-workspace).
-fn write_workspace_config(
+async fn write_workspace_config(
     config_paths: &ConfigPaths,
     workspace_path: &std::path::Path,
     agent: &ComponentSource,
@@ -55,8 +55,9 @@ fn write_workspace_config(
 ) {
     GlobalAgentConfig::new(agent.clone())
         .save(config_paths)
+        .await
         .unwrap();
-    mods.save(config_paths, workspace_path).unwrap();
+    mods.save(config_paths, workspace_path).await.unwrap();
 }
 
 /// Create a config that uses elizacp as the backend agent.
@@ -95,7 +96,7 @@ async fn test_no_config_initial_setup() -> Result<(), sacp::Error> {
     // Pre-populate the global agent config so we skip agent selection
     let default_agent = elizacp_agent();
     let global_config = crate::user_config::GlobalAgentConfig::new(default_agent.clone());
-    global_config.save(&config_paths).unwrap();
+    global_config.save(&config_paths).await.unwrap();
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
@@ -216,7 +217,7 @@ async fn test_new_session_with_config() -> Result<(), sacp::Error> {
     let workspace_path = PathBuf::from("/fake/workspace");
     let agent_source = elizacp_agent();
     let extensions = empty_mods();
-    write_workspace_config(&config_paths, &workspace_path, &agent_source, &extensions);
+    write_workspace_config(&config_paths, &workspace_path, &agent_source, &extensions).await;
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();
@@ -308,7 +309,7 @@ async fn test_config_mode_entry() -> Result<(), sacp::Error> {
     let workspace_path = PathBuf::from("/fake/workspace");
     let agent_source = elizacp_agent();
     let extensions = empty_mods();
-    write_workspace_config(&config_paths, &workspace_path, &agent_source, &extensions);
+    write_workspace_config(&config_paths, &workspace_path, &agent_source, &extensions).await;
 
     let notifications = Arc::new(Mutex::new(CollectedNotifications::default()));
     let notifications_clone = notifications.clone();

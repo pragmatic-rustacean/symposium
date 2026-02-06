@@ -161,6 +161,9 @@ impl Recommendations {
 fn serialize_recommendation(rec: &Recommendation) -> Result<String> {
     let mut lines = Vec::new();
 
+    // Serialize kind
+    lines.push(format!("kind = {}", serde_json::to_value(rec.kind)?));
+
     // Serialize source as inline table
     let source_line = serialize_source(&rec.source)?;
     lines.push(source_line);
