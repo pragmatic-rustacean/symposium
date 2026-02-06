@@ -57,6 +57,10 @@ registry entries. HTTP and SSE transports are represented using the `Http` and
 `Sse` `ComponentSource` variants and include a `name`, `url`, and optional
 headers.
 
+Local (stdio) MCP servers may now include an optional `name` field in their
+`LocalDistribution`. When provided, this `name` is used as the MCP server's
+display name and tool prefix instead of deriving a name from the command path.
+
 Each MCP server's name (HTTP/SSE) or component source display name (stdio)
 becomes the MCP server tool prefix.
 
