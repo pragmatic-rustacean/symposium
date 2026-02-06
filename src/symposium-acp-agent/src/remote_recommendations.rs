@@ -159,6 +159,9 @@ fn load_local_recommendations(config_paths: &ConfigPaths) -> Result<Option<Recom
         .join("config")
         .join(LOCAL_RECOMMENDATIONS_FILENAME);
 
+    tracing::debug!(?local_path);
+    tracing::debug!(exists = ?local_path.exists());
+
     if !local_path.exists() {
         return Ok(None);
     }
@@ -263,11 +266,15 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let config_paths = ConfigPaths::with_root(temp_dir.path());
 
+        tracing::debug!(?temp_dir, ?config_paths);
+
         // Create local recommendations with a unique mod
         let local_dir = config_paths.root().join("config");
         tokio::fs::create_dir_all(&local_dir).await.unwrap();
+        let recs_file = local_dir.join(LOCAL_RECOMMENDATIONS_FILENAME);
+        tracing::debug!(?recs_file);
         tokio::fs::write(
-            local_dir.join(LOCAL_RECOMMENDATIONS_FILENAME),
+            recs_file,
             r#"
 [[recommendation]]
 source.builtin = "test-local-mod"
