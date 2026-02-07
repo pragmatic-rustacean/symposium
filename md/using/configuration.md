@@ -32,9 +32,30 @@ Configuration
 | `1`, `2`, etc. | Toggle a mod on or off. Disabled mods stay in the list but aren't loaded. |
 | `SAVE` | Write changes to disk. They persist across sessions. |
 | `CANCEL` | Discard changes and exit. |
-| `MCPS` | Manage workspace MCP servers (add/remove stdio, http, sse servers). |
+
 
 Changes take effect immediately for the current session. Use `SAVE` to keep them for future sessions.
+
+## Local Recommendations (`RECS`)
+
+`RECS` opens an interactive menu for managing the file `config/recommendations.toml`.
+
+| Command | Description |
+|---------|-------------|
+| `ADD` | Add a new recommendation interactively. |
+| `REMOVE N` | Remove recommendation number `N` from the local recommendations list. |
+| `BACK` | Return to the main configuration menu. |
+
+The `ADD` flow currently creates a recommendation without an interactive `when` condition; by default the recommendation will apply unconditionally.
+
+## Recommendation Diffs
+
+When remote recommendations change you may be prompted with a short diff. The prompt accepts the following commands:
+
+- `SAVE` — Accept the new recommendations and apply them to the workspace.
+- `IGNORE` — Disable all newly recommended mods (keeps current config but marks the new recommendations as disabled).
+- `CONFIG` — Open the interactive configuration menu so you can selectively enable/disable or otherwise edit recommendations before saving.
+
 
 ## MCP Servers
 

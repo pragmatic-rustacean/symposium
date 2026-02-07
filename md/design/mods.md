@@ -48,8 +48,7 @@ The special value `defaults` expands to all known built-in mods:
 
 Workspace configuration can include MCP servers, which are now represented as
 mods with `kind = MCP`. They are attached directly to new sessions by the
-conductor but are stored in the workspace `mods` list. This unifies server
-configuration with the existing mod model.
+conductor.
 
 Stdio MCP servers reuse the same `ComponentSource` distribution formats as mods,
 so they can be resolved from `cargo`, `npx`, `pipx`, `binary`, `local`, or
@@ -57,7 +56,7 @@ registry entries. HTTP and SSE transports are represented using the `Http` and
 `Sse` `ComponentSource` variants and include a `name`, `url`, and optional
 headers.
 
-Local (stdio) MCP servers may now include an optional `name` field in their
+Local (stdio) MCP servers may include an optional `name` field in their
 `LocalDistribution`. When provided, this `name` is used as the MCP server's
 display name and tool prefix instead of deriving a name from the command path.
 

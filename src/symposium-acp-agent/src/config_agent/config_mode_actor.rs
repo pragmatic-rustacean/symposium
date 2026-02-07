@@ -844,7 +844,7 @@ impl ConfigModeActor {
         // Commands
         msg.push_str("# Commands\n\n");
         msg.push_str("- `AGENT` - Change agent (affects all workspaces)\n");
-        msg.push_str("- `RECS` - Update local recommendations (config/recommendations.toml)\n");
+        msg.push_str("- `RECS` - Update user-defined recommendations\n");
         match mods.mods.len() {
             0 => {}
             1 => msg.push_str("- `1` - Toggle mod enabled/disabled in this workspace\n"),
