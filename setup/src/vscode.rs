@@ -4,6 +4,14 @@ use anyhow::{Context, Result, anyhow};
 use std::path::Path;
 use std::process::Command;
 
+fn platform_command(base: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!("{}.cmd", base)
+    } else {
+        base.to_string()
+    }
+}
+
 /// Build and install the VSCode extension
 pub fn build_and_install_extension(repo_root: &Path, dry_run: bool) -> Result<()> {
     let extension_dir = repo_root.join("vscode-extension");
@@ -136,7 +144,7 @@ fn install_vendor_dependencies(repo_root: &Path) -> Result<()> {
 
     println!("📥 Installing vendor dependencies (mynah-ui)...");
 
-    let output = Command::new("npm")
+    let output = Command::new(platform_command("npm"))
         .args(["install"])
         .current_dir(&mynah_dir)
         .output()
@@ -153,7 +161,7 @@ fn install_vendor_dependencies(repo_root: &Path) -> Result<()> {
     // Build mynah-ui (generates dist/ with type declarations)
     println!("🔨 Building vendor dependencies (mynah-ui)...");
 
-    let output = Command::new("npm")
+    let output = Command::new(platform_command("npm"))
         .args(["run", "build"])
         .current_dir(&mynah_dir)
         .output()
@@ -174,7 +182,7 @@ fn install_vendor_dependencies(repo_root: &Path) -> Result<()> {
 fn install_dependencies(extension_dir: &Path) -> Result<()> {
     println!("📥 Installing extension dependencies...");
 
-    let output = Command::new("npm")
+    let output = Command::new(platform_command("npm"))
         .args(["install"])
         .current_dir(extension_dir)
         .output()
@@ -195,7 +203,7 @@ fn install_dependencies(extension_dir: &Path) -> Result<()> {
 fn build_extension(extension_dir: &Path) -> Result<()> {
     println!("🔨 Building extension...");
 
-    let output = Command::new("npm")
+    let output = Command::new(platform_command("npm"))
         .args(["run", "webpack-dev"])
         .current_dir(extension_dir)
         .output()
@@ -219,7 +227,7 @@ fn package_extension(extension_dir: &Path) -> Result<()> {
     // Clean up any old .vsix files first to avoid ambiguity
     clean_old_vsix_files(extension_dir)?;
 
-    let output = Command::new("npx")
+    let output = Command::new(platform_command("npx"))
         .args(["vsce", "package", "--no-dependencies"])
         .current_dir(extension_dir)
         .output()
@@ -243,7 +251,7 @@ fn install_extension(extension_dir: &Path) -> Result<()> {
 
     println!("📥 Installing VSCode extension: {}", vsix_file);
 
-    let output = Command::new("code")
+    let output = Command::new(platform_command("code"))
         .args(["--install-extension", &vsix_file])
         .current_dir(extension_dir)
         .output()
