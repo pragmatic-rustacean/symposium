@@ -447,7 +447,7 @@ impl ConfigAgent {
         // Check for recommendation diff on mods
         if let Some(recs) = self.load_recommendations() {
             tracing::debug!(?recs);
-            let workspace_recs = recs.for_workspace(&workspace_path);   
+            let workspace_recs = recs.for_workspace(&workspace_path);
             if let Some(diff) = workspace_recs.diff_against(&mods_config) {
                 tracing::debug!(?diff, "handle_new_session: diff computed");
 

@@ -727,12 +727,14 @@ fn resolve_local(local: &LocalDistribution) -> Result<McpServer> {
         .map(|(k, v)| EnvVariable::new(k.clone(), v.clone()))
         .collect();
 
-    let file_name = Path::new(&local.command)
-        .file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| local.command.clone());
+    let name = local.name.clone().unwrap_or_else(|| {
+        Path::new(&local.command)
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| local.command.clone())
+    });
     Ok(McpServer::Stdio(
-        McpServerStdio::new(file_name, &local.command)
+        McpServerStdio::new(name, &local.command)
             .args(local.args.clone())
             .env(env),
     ))
