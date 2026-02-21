@@ -113,6 +113,14 @@ fn current_exe() -> Result<PathBuf> {
     std::env::current_exe().context("Failed to get current executable path")
 }
 
+fn platform_binary_exe(binary_name: &str) -> String {
+    if cfg!(windows) {
+        format!("{}.exe", binary_name)
+    } else {
+        binary_name.to_string()
+    }
+}
+
 /// Built-in agents that are always available
 pub fn built_in_agents() -> Result<Vec<RegistryEntry>> {
     let exe = current_exe()?;
@@ -480,7 +488,9 @@ fn install_cargo_crate_sync(
         ])
         .output();
 
-    let binary_path = cache_dir.join("bin").join(binary_name);
+    let binary_path = cache_dir
+        .join("bin")
+        .join(platform_binary_exe(&binary_name));
 
     match binstall_result {
         Ok(output) if output.status.success() => {
@@ -791,7 +801,9 @@ async fn resolve_cargo(cargo: &CargoDistribution) -> Result<McpServer> {
     };
 
     let cache_dir = get_binary_cache_dir(&cargo.crate_name, &version)?;
-    let binary_path = cache_dir.join("bin").join(&binary_name);
+    let binary_path = cache_dir
+        .join("bin")
+        .join(platform_binary_exe(&binary_name));
 
     // Check if we need to install
     if !binary_path.exists() {
@@ -900,7 +912,9 @@ pub async fn resolve_distribution(entry: &RegistryEntry) -> Result<Option<McpSer
         };
 
         let cache_dir = get_binary_cache_dir(&entry.id, &version)?;
-        let binary_path = cache_dir.join("bin").join(&binary_name);
+        let binary_path = cache_dir
+            .join("bin")
+            .join(platform_binary_exe(&binary_name));
 
         // Check if we need to install
         if !binary_path.exists() {
